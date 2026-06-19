@@ -196,6 +196,7 @@ def run_configured_stamping(args: argparse.Namespace) -> tuple[Path, Path]:
             {
                 "slot_name": slot.name,
                 "side": slot.side,
+                "rotation_deg": slot.rotation_deg,
                 "sticker_path": slot.sticker,
                 "attachment": attachment,
                 "frame": frame,

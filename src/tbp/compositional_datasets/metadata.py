@@ -123,6 +123,7 @@ def multi_generation_metadata(
         sticker = {
             "slot_name": str(placement["slot_name"]),
             "side": str(placement["side"]),
+            "rotation_deg": float(placement["rotation_deg"]),
             "sticker_path": str(placement["sticker_path"]),
         }
         sticker.update(
