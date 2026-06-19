@@ -1,0 +1,55 @@
+{
+  "min_coverage": 0.95,
+  "gap": 0.004,
+  "max_longest_side": 0.021,
+  "min_longest_side": 0.01,
+  "placement": {
+    "right_axis": "x",
+    "up_axis": "z",
+    "front_axis": "y"
+  },
+  "slots": [
+    {
+      "name": "front_top",
+      "side": "front",
+      "offset": [0.0, 0.018],
+      "sticker": "assets/2D_stickers/star.png",
+      "rotation_deg": 0
+    },
+    {
+      "name": "front_left",
+      "side": "front",
+      "offset": [-0.018, -0.012],
+      "sticker": "assets/2D_stickers/square.png",
+      "rotation_deg": 0
+    },
+    {
+      "name": "front_right",
+      "side": "front",
+      "offset": [0.018, -0.012],
+      "sticker": "assets/2D_stickers/triangle.png",
+      "rotation_deg": 0
+    },
+    {
+      "name": "back_top",
+      "side": "back",
+      "offset": [0.0, 0.018],
+      "sticker": "assets/2D_stickers/circle.png",
+      "rotation_deg": 0
+    },
+    {
+      "name": "back_left",
+      "side": "back",
+      "offset": [-0.018, -0.012],
+      "sticker": "assets/2D_stickers/heart.png",
+      "rotation_deg": 0
+    },
+    {
+      "name": "back_right",
+      "side": "back",
+      "offset": [0.018, -0.012],
+      "sticker": "assets/2D_stickers/star.png",
+      "rotation_deg": 0
+    }
+  ]
+}
