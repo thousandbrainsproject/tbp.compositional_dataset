@@ -243,6 +243,10 @@ python scripts/append_perturbed_scene_objects.py \
   --min-displacement 0.002 --max-displacement 0.006
 ```
 
+The append command refuses to overwrite any requested target. It stages and
+verifies the full batch before installation; if rendering or verification
+fails, it installs no target artifacts.
+
 Compare a source object and its perturbed pair side by side:
 
 ```bash
