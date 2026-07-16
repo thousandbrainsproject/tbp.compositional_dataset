@@ -12,21 +12,23 @@ from tbp.compositional_datasets.sticker_disk import (
 )
 
 
-def _triangle_normal_z(
+def _triangle_normal_y(
     vertices: Sequence[tuple[float, float, float]],
     face: tuple[int, ...],
 ) -> float:
-    """Return the unnormalized Z component of a triangle normal.
+    """Return the unnormalized Y component of a triangle normal.
 
     Args:
         vertices: Object-space mesh vertices.
         face: Triangle vertex indices.
 
     Returns:
-        Signed Z component of the face normal.
+        Signed Y component of the face normal.
     """
     a, b, c = (vertices[index] for index in face)
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    ab = tuple(b[index] - a[index] for index in range(3))
+    ac = tuple(c[index] - a[index] for index in range(3))
+    return ab[2] * ac[0] - ab[0] * ac[2]
 
 
 def test_default_disk_dimensions_and_counts() -> None:
@@ -40,8 +42,8 @@ def test_default_disk_dimensions_and_counts() -> None:
     assert DEFAULT_THICKNESS == 0.001
     assert DEFAULT_SEGMENTS == 64
     assert max(xs) - min(xs) == pytest.approx(0.02)
-    assert max(ys) - min(ys) == pytest.approx(0.02)
-    assert max(zs) - min(zs) == pytest.approx(0.001)
+    assert max(ys) - min(ys) == pytest.approx(0.001)
+    assert max(zs) - min(zs) == pytest.approx(0.02)
     assert len(mesh.vertices) == 2 * 64 + 2
     assert len(mesh.faces) == 3 * 64
 
@@ -72,8 +74,8 @@ def test_caps_face_outward() -> None:
     """Front and back triangle winding points away from the disk center."""
     mesh = build_sticker_disk_mesh(segments=8)
 
-    assert all(_triangle_normal_z(mesh.vertices, face) > 0.0 for face in mesh.faces[:8])
-    assert all(_triangle_normal_z(mesh.vertices, face) < 0.0 for face in mesh.faces[8:16])
+    assert all(_triangle_normal_y(mesh.vertices, face) < 0.0 for face in mesh.faces[:8])
+    assert all(_triangle_normal_y(mesh.vertices, face) > 0.0 for face in mesh.faces[8:16])
 
 
 def test_face_uvs_match_loops_and_stay_in_unit_square() -> None:

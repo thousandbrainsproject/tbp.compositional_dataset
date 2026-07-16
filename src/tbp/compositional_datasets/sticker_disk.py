@@ -129,14 +129,14 @@ def build_sticker_disk_mesh(
     half_thickness = thickness / 2.0
     angles = tuple(2.0 * math.pi * index / segments for index in range(segments))
     front_ring = tuple(
-        (radius * math.cos(angle), radius * math.sin(angle), half_thickness)
+        (radius * math.cos(angle), -half_thickness, radius * math.sin(angle))
         for angle in angles
     )
-    back_ring = tuple((x, y, -half_thickness) for x, y, _z in front_ring)
+    back_ring = tuple((x, half_thickness, z) for x, _y, z in front_ring)
     vertices = (
-        (0.0, 0.0, half_thickness),
+        (0.0, -half_thickness, 0.0),
         *front_ring,
-        (0.0, 0.0, -half_thickness),
+        (0.0, half_thickness, 0.0),
         *back_ring,
     )
 
