@@ -67,9 +67,10 @@ def miniature_dataset(tmp_path: Path, source_config: dict[str, Any]) -> Path:
 
 
 def test_target_id_adds_100_and_preserves_suffix():
-    """Verify numeric ID offsets leave object-name suffixes unchanged."""
+    """Verify generic numeric ID offsets leave object-name suffixes unchanged."""
     assert target_object_id("101_cube_6x2d_stickers", 100) == "201_cube_6x2d_stickers"
     assert target_object_id("200_sphere_6x2d_stickers", 100) == "300_sphere_6x2d_stickers"
+    assert target_object_id("101_cube_6x2d_stickers", 7) == "108_cube_6x2d_stickers"
 
 
 def test_discovery_returns_complete_source_target_pairs(miniature_dataset: Path) -> None:
@@ -357,6 +358,58 @@ def test_append_missing_rendered_glb_installs_no_target_artifacts(
     assert not (out_dir / "meshes" / "201_cube_6x2d_stickers").exists()
 
 
+def test_append_invalid_rendered_metadata_installs_no_requested_targets(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify written render outputs remain staged when metadata verification fails."""
+    render_calls = 0
+
+    def render_with_invalid_metadata(command: list[str]) -> None:
+        """Write complete outputs, corrupting the second target's metadata.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal render_calls
+        render_calls += 1
+        _fake_render(command)
+        if render_calls != 2:
+            return
+        output_path = Path(command[command.index("--out") + 1])
+        metadata_path = output_path.with_suffix(".json")
+        metadata = json.loads(metadata_path.read_text())
+        metadata["parent_mesh_path"] = "assets/parents/unexpected.glb"
+        metadata_path.write_text(json.dumps(metadata))
+
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        render_with_invalid_metadata,
+    )
+    out_dir = tmp_path / "perturbed"
+
+    with pytest.raises(ValueError, match="rendered parent mesh changed"):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=2,
+            id_offset=100,
+            seed=17,
+            bounds=PerturbationBounds(),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert render_calls == 2
+    for target_id in ("201_cube_6x2d_stickers", "202_cylinder_6x2d_stickers"):
+        assert not (out_dir / "generation_configs" / f"{target_id}.json").exists()
+        assert not (
+            out_dir / "configs" / f"{target_id}.object_config.json"
+        ).exists()
+        assert not (out_dir / "meshes" / target_id).exists()
+
+
 def test_append_rejects_low_coverage_before_render_or_install(
     miniature_dataset: Path,
     tmp_path: Path,
@@ -420,6 +473,33 @@ def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any
         target_config,
         _rendered_metadata(source_config),
         _rendered_metadata(target_config),
+        PerturbationBounds(),
+    )
+
+
+def test_rendered_anchor_provenance_allows_independent_float_noise(
+    source_config: dict[str, Any],
+) -> None:
+    """Allow realistic source/target anchor noise without losing signed provenance."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+        slot["offset"][1] -= 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    for source_record, target_record in zip(
+        source_metadata["stickers"], target_metadata["stickers"], strict=True
+    ):
+        source_record["world_space_anchor_point"][0] += 4e-9
+        target_record["world_space_anchor_point"][0] -= 4e-9
+        source_record["world_space_anchor_point"][2] -= 3e-9
+        target_record["world_space_anchor_point"][2] += 3e-9
+
+    verify_rendered_pair(
+        source_config,
+        target_config,
+        source_metadata,
+        target_metadata,
         PerturbationBounds(),
     )
 
@@ -580,6 +660,89 @@ def test_spacing_enforces_absolute_floor(source_config):
 
     with pytest.raises(ValueError, match="slots overlap on side front"):
         validate_perturbed_config(source_config, target, PerturbationBounds())
+
+
+def test_validation_rejects_top_below_a_lower_slot(source_config):
+    """Reject a target whose top slot is no longer above both lower slots."""
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        slot["offset"][0] += 0.002
+    target["slots"][0]["offset"][1] = -0.020
+
+    with pytest.raises(ValueError, match="top slot is not above both lower slots"):
+        validate_perturbed_config(
+            source_config, target, PerturbationBounds(0.001, 0.1)
+        )
+
+
+def test_validation_rejects_left_slot_to_right_of_right_slot(source_config):
+    """Reject a target whose signed horizontal slot order is reversed."""
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        slot["offset"][0] += 0.002
+    target["slots"][1]["offset"][0] = 0.020
+    target["slots"][2]["offset"][0] = -0.020
+
+    with pytest.raises(ValueError, match="left slot is not left of right slot"):
+        validate_perturbed_config(
+            source_config, target, PerturbationBounds(0.001, 0.1)
+        )
+
+
+def test_validation_rejects_triangle_winding_reversal(source_config):
+    """Reject a target triangle with the opposite source winding."""
+    source_config["slots"][0]["offset"][1] = -0.020
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        slot["offset"][0] += 0.002
+    target["slots"][0]["offset"][1] = 0.018
+
+    with pytest.raises(ValueError, match="triangle orientation changed"):
+        validate_perturbed_config(
+            source_config, target, PerturbationBounds(0.001, 0.1)
+        )
+
+
+def test_perturbation_resamples_after_a_rejected_candidate(
+    source_config: dict[str, Any],
+) -> None:
+    """Retry with a second sample after the first violates top ordering."""
+
+    class ControlledRandom:
+        """Return one invalid candidate followed by a valid translated candidate."""
+
+        def __init__(self) -> None:
+            """Prepare angle/radius values for two six-slot candidates."""
+            invalid_candidate = [3.0 * math.pi / 2.0, 0.04]
+            invalid_candidate.extend([0.0, 0.002] * 5)
+            valid_candidate = [0.0, 0.002] * 6
+            self.values = iter(invalid_candidate + valid_candidate)
+
+        def uniform(self, start: float, end: float) -> float:
+            """Return the next controlled value.
+
+            Args:
+                start: Requested lower sampling bound.
+                end: Requested upper sampling bound.
+
+            Returns:
+                Next angle or radius in the controlled sequence.
+            """
+            del start, end
+            return next(self.values)
+
+    result = perturb_stamp_config(
+        source_config,
+        ControlledRandom(),  # type: ignore[arg-type]
+        PerturbationBounds(0.002, 0.1, max_attempts=2),
+    )
+
+    for source_slot, target_slot in zip(
+        source_config["slots"], result["slots"], strict=True
+    ):
+        assert target_slot["offset"] == pytest.approx(
+            [source_slot["offset"][0] + 0.002, source_slot["offset"][1]]
+        )
 
 
 def test_validation_reports_front_before_back_when_both_are_invalid(source_config):

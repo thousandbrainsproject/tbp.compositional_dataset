@@ -15,6 +15,7 @@ def test_render_records_shows_pair_in_shared_side_by_side_view(monkeypatch):
     visualize_model = load_visualize_model_module()
     constructor_kwargs = {}
     show_calls = []
+    close_calls = []
 
     class FakePlotter:
         """Record Plotter construction and display calls without opening a GUI."""
@@ -38,7 +39,7 @@ def test_render_records_shows_pair_in_shared_side_by_side_view(monkeypatch):
 
         def close(self) -> None:
             """Close the fake plotter without opening a GUI."""
-            pass
+            close_calls.append(call())
 
     monkeypatch.setattr(visualize_model, "Plotter", FakePlotter)
     monkeypatch.setattr(
@@ -57,9 +58,36 @@ def test_render_records_shows_pair_in_shared_side_by_side_view(monkeypatch):
 
     assert constructor_kwargs["shape"] == (1, 2)
     assert constructor_kwargs["sharecam"] is True
+    assert [show_call.args[0] for show_call in show_calls] == [
+        "actor:source",
+        "actor:target",
+    ]
+    assert [show_call.args[1] for show_call in show_calls] == [
+        ("source", {"pos": "top-left", "s": 0.7, "c": "black"}),
+        ("target", {"pos": "top-left", "s": 0.7, "c": "black"}),
+    ]
     assert [call.kwargs["at"] for call in show_calls] == [0, 1]
+    assert [call.kwargs["axes"] for call in show_calls] == [1, 1]
+    assert [call.kwargs["viewup"] for call in show_calls] == ["z", "z"]
     assert show_calls[0].kwargs["interactive"] is False
     assert show_calls[1].kwargs["interactive"] is True
+    assert close_calls == [call()]
+
+
+def test_render_record_delegates_single_record_as_a_list(monkeypatch):
+    """Keep the one-record compatibility helper delegated to the shared renderer."""
+    visualize_model = load_visualize_model_module()
+    render_calls = []
+    record = SimpleNamespace(name="single")
+    monkeypatch.setattr(
+        visualize_model,
+        "render_records",
+        lambda records: render_calls.append(records),
+    )
+
+    visualize_model.render_record(record)
+
+    assert render_calls == [[record]]
 
 
 def test_main_loads_and_renders_two_existing_paths(monkeypatch, tmp_path, capsys):

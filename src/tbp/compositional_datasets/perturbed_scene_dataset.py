@@ -23,6 +23,7 @@ from tbp.compositional_datasets.scene_dataset import (
 )
 
 MIN_STAMP_COVERAGE = 0.95
+ABSOLUTE_PROVENANCE_TOLERANCE = 1e-8
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,7 @@ def discover_object_pairs(
         out_dir: Dataset directory where target artifacts will be written.
         source_start: First three-digit numeric source prefix to discover.
         count: Number of consecutive numeric source prefixes to discover.
-        id_offset: Positive numeric offset used to construct target object IDs.
+        id_offset: Required offset of exactly 100 for the protected pair domain.
 
     Returns:
         Immutable source-target records in numeric source order.
@@ -269,7 +270,12 @@ def verify_rendered_pair(
             target_offset[1] - source_offset[1],
         )
         if not all(
-            math.isclose(rendered, configured, abs_tol=1e-9)
+            math.isclose(
+                rendered,
+                configured,
+                rel_tol=0.0,
+                abs_tol=ABSOLUTE_PROVENANCE_TOLERANCE,
+            )
             for rendered, configured in zip(
                 rendered_displacement, configured_displacement, strict=True
             )
@@ -426,7 +432,7 @@ def append_perturbed_scene_objects(
         out_dir: Dataset directory where verified target artifacts are installed.
         source_start: First three-digit numeric source prefix to render.
         count: Number of consecutive source objects to render.
-        id_offset: Offset used to construct protected target object IDs.
+        id_offset: Required offset of exactly 100 for protected target object IDs.
         seed: Random seed used for deterministic offset perturbations.
         bounds: Allowed displacement and perturbation sampling bounds.
         stamping_script: Blender stamping script used to render each target.
