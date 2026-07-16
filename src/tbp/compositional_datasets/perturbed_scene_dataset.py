@@ -26,6 +26,9 @@ MIN_STAMP_COVERAGE = 0.95
 DEFAULT_PERTURBATION_SEED = 123
 RENDERED_ANCHOR_PROVENANCE_ABS_TOLERANCE = 1e-6
 GEOMETRY_TOLERANCE = 1e-12
+CONFIGURED_SLOT_RAY_MISS_PATTERN = re.compile(
+    r"Configured slot [^\r\n]+ did not hit a mesh face"
+)
 
 
 @dataclass(frozen=True)
@@ -530,8 +533,6 @@ def append_perturbed_scene_objects(
             source_config = _read_json(pair.source_generation_config)
             if source_config["min_coverage"] < MIN_STAMP_COVERAGE:
                 raise ValueError("min_coverage must be at least 0.95")
-            target_config = perturb_stamp_config(source_config, rng, bounds)
-            _write_json(staged_generation_config, target_config)
             _write_json(
                 staged_object_config,
                 target_object_config(
@@ -539,31 +540,49 @@ def append_perturbed_scene_objects(
                 ),
             )
             source_metadata = _read_json(pair.source_mesh_dir / "textured.json")
-            command = blender_stamp_command_args(
-                blender_executable,
-                stamping_script.resolve(),
-                Path(source_metadata["parent_mesh_path"]),
-                staged_generation_config,
-                staged_mesh_dir / "textured.glb",
-            )
-            _run_render_command(command)
-            output_glb_path = staged_mesh_dir / "textured.glb"
-            if not output_glb_path.exists():
-                raise RuntimeError(
-                    "Blender command completed without writing expected GLB: "
-                    f"{output_glb_path}"
+            for physical_attempt in range(1, bounds.max_attempts + 1):
+                target_config = perturb_stamp_config(source_config, rng, bounds)
+                _write_json(staged_generation_config, target_config)
+                command = blender_stamp_command_args(
+                    blender_executable,
+                    stamping_script.resolve(),
+                    Path(source_metadata["parent_mesh_path"]),
+                    staged_generation_config,
+                    staged_mesh_dir / "textured.glb",
                 )
-            _normalize_texture_sidecar(
-                staged_mesh_dir,
-                preview_texture_max_size=preview_texture_max_size,
-            )
-            verify_rendered_pair(
-                source_config,
-                target_config,
-                source_metadata,
-                _read_json(staged_mesh_dir / "textured.json"),
-                bounds,
-            )
+                try:
+                    _run_render_command(command)
+                except RuntimeError as error:
+                    ray_miss = CONFIGURED_SLOT_RAY_MISS_PATTERN.search(str(error))
+                    if ray_miss is None:
+                        raise
+                    shutil.rmtree(staged_mesh_dir, ignore_errors=True)
+                    if physical_attempt == bounds.max_attempts:
+                        raise RuntimeError(
+                            f"rendering {pair.target_id} failed after "
+                            f"{physical_attempt} physical candidate attempts: "
+                            f"{ray_miss.group(0)}"
+                        ) from error
+                    continue
+
+                output_glb_path = staged_mesh_dir / "textured.glb"
+                if not output_glb_path.exists():
+                    raise RuntimeError(
+                        "Blender command completed without writing expected GLB: "
+                        f"{output_glb_path}"
+                    )
+                _normalize_texture_sidecar(
+                    staged_mesh_dir,
+                    preview_texture_max_size=preview_texture_max_size,
+                )
+                verify_rendered_pair(
+                    source_config,
+                    target_config,
+                    source_metadata,
+                    _read_json(staged_mesh_dir / "textured.json"),
+                    bounds,
+                )
+                break
 
         for directory_name in ("generation_configs", "configs", "meshes"):
             (out_dir / directory_name).mkdir(parents=True, exist_ok=True)

@@ -234,6 +234,45 @@ def _fake_render(command: list[str]) -> None:
     )
 
 
+def _sample_valid_translated_candidate(
+    source: dict[str, Any],
+    rng: random.Random,
+    bounds: PerturbationBounds,
+) -> dict[str, Any]:
+    """Sample one deterministic valid translation for retry-loop tests.
+
+    Args:
+        source: Original sticker layout configuration.
+        rng: Random generator whose state advances once per physical candidate.
+        bounds: Approved displacement bounds for the sampled translation.
+
+    Returns:
+        Deep-copied config translated right by one in-bounds displacement.
+    """
+    candidate = deepcopy(source)
+    displacement = rng.uniform(bounds.min_displacement, bounds.max_displacement)
+    for slot in candidate["slots"]:
+        slot["offset"][0] += displacement
+    return candidate
+
+
+def _write_partial_render_artifacts(command: list[str]) -> Path:
+    """Write representative artifacts left behind by a failed Blender render.
+
+    Args:
+        command: Blender-style command arguments containing the output path.
+
+    Returns:
+        Staged mesh directory containing the partial artifacts.
+    """
+    output_path = Path(command[command.index("--out") + 1])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(b"partial glTF")
+    output_path.with_suffix(".json").write_text("{}")
+    (output_path.parent / "partial.tmp").write_text("partial")
+    return output_path.parent
+
+
 def test_append_renders_verifies_and_installs_complete_batch(
     miniature_dataset: Path,
     tmp_path: Path,
@@ -362,6 +401,177 @@ def test_append_render_failure_installs_no_targets_or_rewrites_scene_config(
         ).exists()
         assert not (miniature_dataset / "meshes" / target_id).exists()
     assert scene_config_path.read_text() == '{"existing": true}\n'
+
+
+def test_append_resamples_same_object_after_configured_slot_ray_miss(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Install the second deterministic candidate after one proven ray miss."""
+    bounds = PerturbationBounds(0.008, 0.016, max_attempts=2)
+    rendered_configs: list[dict[str, Any]] = []
+    render_calls = 0
+
+    def miss_then_succeed(command: list[str]) -> None:
+        """Leave partial files on the first call and render the second candidate.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal render_calls
+        render_calls += 1
+        config_path = Path(command[command.index("--config") + 1])
+        rendered_configs.append(json.loads(config_path.read_text()))
+        if render_calls == 1:
+            _write_partial_render_artifacts(command)
+            raise RuntimeError(
+                "Blender command failed. ValueError: Configured slot front_left "
+                "did not hit a mesh face"
+            )
+        output_path = Path(command[command.index("--out") + 1])
+        assert not output_path.parent.exists()
+        _fake_render(command)
+
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "perturb_stamp_config",
+        _sample_valid_translated_candidate,
+    )
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "_run_render_command",
+        miss_then_succeed,
+    )
+    out_dir = tmp_path / "ray-miss-retry"
+
+    pairs = perturbed_scene_dataset.append_perturbed_scene_objects(
+        miniature_dataset,
+        out_dir,
+        source_start=101,
+        count=1,
+        id_offset=100,
+        seed=123,
+        bounds=bounds,
+        stamping_script=Path("scripts/stamp_object_from_config.py"),
+    )
+
+    installed_config = json.loads(pairs[0].target_generation_config.read_text())
+    assert render_calls == 2
+    assert rendered_configs[0] != rendered_configs[1]
+    assert installed_config == rendered_configs[1]
+    assert not (pairs[0].target_mesh_dir / "partial.tmp").exists()
+
+
+def test_append_does_not_retry_unrelated_blender_failure(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Abort after one render when Blender reports a different failure."""
+    render_calls = 0
+
+    def fail_for_unrelated_reason(command: list[str]) -> None:
+        """Raise a non-ray-miss Blender error.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal render_calls
+        render_calls += 1
+        raise RuntimeError(
+            "Blender command failed. ValueError: Configured slot front_left "
+            "hit unexpected object mug_handle"
+        )
+
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "perturb_stamp_config",
+        _sample_valid_translated_candidate,
+    )
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "_run_render_command",
+        fail_for_unrelated_reason,
+    )
+    out_dir = tmp_path / "unrelated-render-failure"
+
+    with pytest.raises(RuntimeError, match="hit unexpected object mug_handle"):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=1,
+            id_offset=100,
+            seed=123,
+            bounds=PerturbationBounds(0.008, 0.016, max_attempts=2),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert render_calls == 1
+    assert not (out_dir / "generation_configs").exists()
+    assert not (out_dir / "configs").exists()
+    assert not (out_dir / "meshes").exists()
+
+
+def test_append_exhausts_configured_slot_ray_miss_attempts_atomically(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Abort cleanly after the bounded number of physical ray-miss candidates."""
+    render_calls = 0
+
+    def always_miss(command: list[str]) -> None:
+        """Write partial artifacts and report a proven ray miss.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal render_calls
+        render_calls += 1
+        _write_partial_render_artifacts(command)
+        raise RuntimeError(
+            "Blender command failed. ValueError: Configured slot back_right "
+            "did not hit a mesh face"
+        )
+
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "perturb_stamp_config",
+        _sample_valid_translated_candidate,
+    )
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "_run_render_command",
+        always_miss,
+    )
+    out_dir = tmp_path / "exhausted-ray-misses"
+    bounds = PerturbationBounds(0.008, 0.016, max_attempts=2)
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "201_cube_6x2d_stickers.*2 physical candidate attempts.*"
+            "Configured slot back_right did not hit a mesh face"
+        ),
+    ):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=1,
+            id_offset=100,
+            seed=123,
+            bounds=bounds,
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert render_calls == bounds.max_attempts
+    assert not (out_dir / "generation_configs").exists()
+    assert not (out_dir / "configs").exists()
+    assert not (out_dir / "meshes").exists()
+    assert list(tmp_path.glob(".exhausted-ray-misses-perturbed-staging-*")) == []
 
 
 def test_append_missing_rendered_glb_installs_no_target_artifacts(
