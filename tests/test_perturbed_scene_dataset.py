@@ -36,7 +36,7 @@ def source_config() -> dict[str, Any]:
             ]
         )
     return {
-        "min_coverage": 0.9,
+        "min_coverage": 0.95,
         "gap": 0.004,
         "max_longest_side": 0.021,
         "placement": {"right_axis": "x", "up_axis": "z", "front_axis": "y"},
@@ -311,6 +311,102 @@ def test_append_render_failure_installs_no_targets_or_rewrites_scene_config(
         ).exists()
         assert not (miniature_dataset / "meshes" / target_id).exists()
     assert scene_config_path.read_text() == '{"existing": true}\n'
+
+
+def test_append_missing_rendered_glb_installs_no_target_artifacts(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify a zero-exit render missing its GLB cannot install a target."""
+
+    def render_without_glb(command: list[str]) -> None:
+        """Write render sidecars but remove the required GLB.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        _fake_render(command)
+        output_path = Path(command[command.index("--out") + 1])
+        output_path.unlink()
+
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        render_without_glb,
+    )
+    out_dir = tmp_path / "perturbed"
+
+    with pytest.raises(RuntimeError, match="without writing expected GLB"):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=1,
+            id_offset=100,
+            seed=17,
+            bounds=PerturbationBounds(),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert not (
+        out_dir / "generation_configs" / "201_cube_6x2d_stickers.json"
+    ).exists()
+    assert not (
+        out_dir / "configs" / "201_cube_6x2d_stickers.object_config.json"
+    ).exists()
+    assert not (out_dir / "meshes" / "201_cube_6x2d_stickers").exists()
+
+
+def test_append_rejects_low_coverage_before_render_or_install(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify source coverage below 0.95 is rejected before rendering."""
+    source_config_path = (
+        miniature_dataset
+        / "generation_configs"
+        / "101_cube_6x2d_stickers.json"
+    )
+    source_config = json.loads(source_config_path.read_text())
+    source_config["min_coverage"] = 0.9
+    source_config_path.write_text(json.dumps(source_config))
+    renderer_calls: list[list[str]] = []
+
+    def record_render(command: list[str]) -> None:
+        """Record an unexpected Blender render command.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        renderer_calls.append(command)
+
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        record_render,
+    )
+    out_dir = tmp_path / "perturbed"
+
+    with pytest.raises(ValueError, match="min_coverage must be at least 0.95"):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=1,
+            id_offset=100,
+            seed=17,
+            bounds=PerturbationBounds(),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert renderer_calls == []
+    assert not (
+        out_dir / "generation_configs" / "201_cube_6x2d_stickers.json"
+    ).exists()
+    assert not (
+        out_dir / "configs" / "201_cube_6x2d_stickers.object_config.json"
+    ).exists()
+    assert not (out_dir / "meshes" / "201_cube_6x2d_stickers").exists()
 
 
 def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any]) -> None:

@@ -22,6 +22,8 @@ from tbp.compositional_datasets.scene_dataset import (
     scene_dataset_config,
 )
 
+MIN_STAMP_COVERAGE = 0.95
+
 
 @dataclass(frozen=True)
 class ObjectPair:
@@ -417,7 +419,7 @@ def append_perturbed_scene_objects(
     blender_executable: str = "blender",
     preview_texture_max_size: int = 512,
 ) -> tuple[ObjectPair, ...]:
-    """Render and atomically install a batch of perturbed object pairs.
+    """Render, verify, and install a staged batch of perturbed object pairs.
 
     Args:
         source_dataset: Dataset containing the complete source objects.
@@ -465,6 +467,8 @@ def append_perturbed_scene_objects(
             )
             staged_mesh_dir = staging_dir / "meshes" / pair.target_id
             source_config = _read_json(pair.source_generation_config)
+            if source_config["min_coverage"] < MIN_STAMP_COVERAGE:
+                raise ValueError("min_coverage must be at least 0.95")
             target_config = perturb_stamp_config(source_config, rng, bounds)
             _write_json(staged_generation_config, target_config)
             _write_json(
@@ -482,6 +486,12 @@ def append_perturbed_scene_objects(
                 staged_mesh_dir / "textured.glb",
             )
             _run_render_command(command)
+            output_glb_path = staged_mesh_dir / "textured.glb"
+            if not output_glb_path.exists():
+                raise RuntimeError(
+                    "Blender command completed without writing expected GLB: "
+                    f"{output_glb_path}"
+                )
             _normalize_texture_sidecar(
                 staged_mesh_dir,
                 preview_texture_max_size=preview_texture_max_size,
