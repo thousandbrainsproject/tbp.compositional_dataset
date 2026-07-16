@@ -22,6 +22,14 @@ from tbp.compositional_datasets.perturbed_scene_dataset import (
     verify_rendered_pair,
 )
 
+# Historical initial-pilot range retained only for exact regression fixtures.
+INITIAL_PILOT_MIN_DISPLACEMENT = 0.002
+INITIAL_PILOT_MAX_DISPLACEMENT = 0.006
+INITIAL_PILOT_BOUNDS = PerturbationBounds(
+    INITIAL_PILOT_MIN_DISPLACEMENT,
+    INITIAL_PILOT_MAX_DISPLACEMENT,
+)
+
 
 @pytest.fixture
 def source_config() -> dict[str, Any]:
@@ -265,6 +273,43 @@ def test_append_renders_verifies_and_installs_complete_batch(
     assert (out_dir / "compositional_objects.scene_dataset_config.json").exists()
 
 
+def test_append_library_defaults_use_approved_seed_and_bounds(
+    miniature_dataset: Path,
+    source_config: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use seed 123 and calibrated bounds when library callers omit both."""
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        _fake_render,
+    )
+    out_dir = tmp_path / "approved-defaults"
+
+    pairs = perturbed_scene_dataset.append_perturbed_scene_objects(
+        miniature_dataset,
+        out_dir,
+        source_start=101,
+        count=1,
+        id_offset=100,
+        stamping_script=Path("scripts/stamp_object_from_config.py"),
+    )
+
+    target_config = json.loads(pairs[0].target_generation_config.read_text())
+    expected_config = perturb_stamp_config(
+        source_config,
+        random.Random(123),
+        PerturbationBounds(),
+    )
+    assert target_config == expected_config
+    for source_slot, target_slot in zip(
+        source_config["slots"], target_config["slots"], strict=True
+    ):
+        assert 0.008 <= math.dist(
+            source_slot["offset"], target_slot["offset"]
+        ) <= 0.016
+
+
 def test_append_render_failure_installs_no_targets_or_rewrites_scene_config(
     miniature_dataset: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -478,7 +523,7 @@ def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any
         target_config,
         _rendered_metadata(source_config),
         _rendered_metadata(target_config),
-        PerturbationBounds(0.002, 0.006),
+        INITIAL_PILOT_BOUNDS,
     )
 
 
@@ -505,7 +550,7 @@ def test_rendered_anchor_provenance_allows_independent_float_noise(
         target_config,
         source_metadata,
         target_metadata,
-        PerturbationBounds(0.002, 0.006),
+        INITIAL_PILOT_BOUNDS,
     )
 
 
@@ -526,7 +571,7 @@ def test_rendered_anchor_provenance_rejects_signed_component_mismatch(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(0.002, 0.006),
+            INITIAL_PILOT_BOUNDS,
         )
 
     message = str(exc_info.value)
@@ -553,7 +598,7 @@ def test_verification_rejects_changed_rendered_sticker_size(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(0.002, 0.006),
+            INITIAL_PILOT_BOUNDS,
         )
 
 
@@ -584,7 +629,7 @@ def test_verification_rejects_duplicate_or_extra_rendered_records(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(0.002, 0.006),
+            INITIAL_PILOT_BOUNDS,
         )
 
 
@@ -607,7 +652,7 @@ def test_verification_reports_first_configured_slot_failure(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(0.002, 0.006),
+            INITIAL_PILOT_BOUNDS,
         )
 
 
@@ -654,13 +699,15 @@ def test_verification_rejects_rendered_integrity_mismatch(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(0.002, 0.006),
+            INITIAL_PILOT_BOUNDS,
         )
 
 
-def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_config):
-    """Verify seeded perturbations are bounded and change only offsets."""
-    bounds = PerturbationBounds(0.002, 0.006)
+def test_approved_default_sampling_is_deterministic_and_changes_only_offsets(
+    source_config: dict[str, Any],
+) -> None:
+    """Sample reproducibly with approved seed 123 and default radial bounds."""
+    bounds = PerturbationBounds()
     first = perturb_stamp_config(source_config, random.Random(123), bounds)
     second = perturb_stamp_config(source_config, random.Random(123), bounds)
     assert first == second
@@ -668,7 +715,9 @@ def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_co
         assert {k: v for k, v in source_slot.items() if k != "offset"} == {
             k: v for k, v in target_slot.items() if k != "offset"
         }
-        assert 0.002 <= math.dist(source_slot["offset"], target_slot["offset"]) <= 0.006
+        assert 0.008 <= math.dist(
+            source_slot["offset"], target_slot["offset"]
+        ) <= 0.016
     validate_perturbed_config(source_config, first, bounds)
 
 
@@ -698,14 +747,14 @@ def _candidate_at_attempt(
     return candidate
 
 
-def test_seed_123_first_candidate_rejects_projected_footprint_overlap(
+def test_initial_pilot_seed_123_first_candidate_rejects_footprint_overlap(
     source_config: dict[str, Any],
 ) -> None:
-    """Reject object 101's first candidate despite adequate center spacing."""
+    """Reject the historical initial-pilot candidate despite center spacing."""
     rotations = (75.0, 60.0, 150.0, 255.0, 150.0, 330.0)
     for slot, rotation in zip(source_config["slots"], rotations, strict=True):
         slot["rotation_deg"] = rotation
-    bounds = PerturbationBounds(0.002, 0.006)
+    bounds = INITIAL_PILOT_BOUNDS
     candidate = _candidate_at_attempt(source_config, 123, 1, bounds)
     back_top, _back_left, back_right = candidate["slots"][3:]
 
@@ -719,14 +768,14 @@ def test_seed_123_first_candidate_rejects_projected_footprint_overlap(
         validate_perturbed_config(source_config, candidate, bounds)
 
 
-def test_seed_123_resamples_to_second_projected_footprint_candidate(
+def test_initial_pilot_seed_123_resamples_to_second_footprint_candidate(
     source_config: dict[str, Any],
 ) -> None:
-    """Return object 101's second conservative-valid candidate deterministically."""
+    """Reproduce the historical initial pilot's valid second candidate."""
     rotations = (75.0, 60.0, 150.0, 255.0, 150.0, 330.0)
     for slot, rotation in zip(source_config["slots"], rotations, strict=True):
         slot["rotation_deg"] = rotation
-    bounds = PerturbationBounds(0.002, 0.006)
+    bounds = INITIAL_PILOT_BOUNDS
     expected = _candidate_at_attempt(source_config, 123, 2, bounds)
 
     first = perturb_stamp_config(source_config, random.Random(123), bounds)
@@ -758,14 +807,18 @@ def test_projected_footprint_boundary_contact_is_not_overlap(
         slot["offset"][0] += 0.002
 
     validate_perturbed_config(
-        source_config, target, PerturbationBounds(0.002, 0.006)
+        source_config, target, INITIAL_PILOT_BOUNDS
     )
 
 
 def test_impossible_spacing_reports_attempt_limit(source_config):
     """Verify impossible spacing reports the exhausted attempt limit."""
     source_config["max_longest_side"] = 1.0
-    bounds = PerturbationBounds(0.002, 0.006, max_attempts=3)
+    bounds = PerturbationBounds(
+        INITIAL_PILOT_MIN_DISPLACEMENT,
+        INITIAL_PILOT_MAX_DISPLACEMENT,
+        max_attempts=3,
+    )
     with pytest.raises(ValueError, match="after 3 attempts"):
         perturb_stamp_config(source_config, random.Random(7), bounds)
 
@@ -782,7 +835,7 @@ def test_spacing_enforces_absolute_floor(source_config):
 
     with pytest.raises(ValueError, match="slots overlap on side front"):
         validate_perturbed_config(
-            source_config, target, PerturbationBounds(0.002, 0.006)
+            source_config, target, INITIAL_PILOT_BOUNDS
         )
 
 
@@ -883,5 +936,5 @@ def test_validation_reports_front_before_back_when_both_are_invalid(source_confi
 
     with pytest.raises(ValueError, match="slots overlap on side front"):
         validate_perturbed_config(
-            source_config, target, PerturbationBounds(0.002, 0.006)
+            source_config, target, INITIAL_PILOT_BOUNDS
         )

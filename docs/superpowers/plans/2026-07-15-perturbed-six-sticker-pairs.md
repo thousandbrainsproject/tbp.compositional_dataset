@@ -471,7 +471,8 @@ Expected: exit 0. If it exists, ask the user to choose a new path or explicitly 
 
 - [ ] **Step 2: Run the documented pilot command**
 
-Run:
+Historical/non-production command: this records the superseded initial pilot
+only. Do not use these bounds for current production.
 
 ```bash
 source .venv/bin/activate

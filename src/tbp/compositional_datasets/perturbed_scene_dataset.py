@@ -23,6 +23,7 @@ from tbp.compositional_datasets.scene_dataset import (
 )
 
 MIN_STAMP_COVERAGE = 0.95
+DEFAULT_PERTURBATION_SEED = 123
 RENDERED_ANCHOR_PROVENANCE_ABS_TOLERANCE = 1e-6
 GEOMETRY_TOLERANCE = 1e-12
 
@@ -469,9 +470,9 @@ def append_perturbed_scene_objects(
     source_start: int,
     count: int,
     id_offset: int,
-    seed: int,
-    bounds: PerturbationBounds,
     stamping_script: Path,
+    seed: int = DEFAULT_PERTURBATION_SEED,
+    bounds: PerturbationBounds | None = None,
     blender_executable: str = "blender",
     preview_texture_max_size: int = 512,
 ) -> tuple[ObjectPair, ...]:
@@ -483,8 +484,10 @@ def append_perturbed_scene_objects(
         source_start: First three-digit numeric source prefix to render.
         count: Number of consecutive source objects to render.
         id_offset: Required offset of exactly 100 for protected target object IDs.
-        seed: Random seed used for deterministic offset perturbations.
-        bounds: Allowed displacement and perturbation sampling bounds.
+        seed: Random seed used for deterministic offset perturbations. Defaults
+            to the approved calibration seed.
+        bounds: Allowed displacement and perturbation sampling bounds. Defaults
+            to a new approved `PerturbationBounds` instance.
         stamping_script: Blender stamping script used to render each target.
         blender_executable: Blender executable name or path.
         preview_texture_max_size: Maximum width or height for `textured.png`.
@@ -500,6 +503,8 @@ def append_perturbed_scene_objects(
     """
     source_dataset = Path(source_dataset)
     out_dir = Path(out_dir)
+    if bounds is None:
+        bounds = PerturbationBounds()
     pairs = discover_object_pairs(
         source_dataset,
         out_dir,
