@@ -66,6 +66,46 @@ This representation is the ground truth because it is stable, serializable, and
 directly tied to mesh geometry. The interactive picker is a convenience layer:
 it resolves a user click to a concrete `SurfaceAttachment` before export.
 
+## Circular 2D Sticker Objects
+
+Create a standalone circular sticker object in Blender background mode:
+
+```bash
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/square.png \
+  --out outputs/square.glb
+```
+
+The generated object is actual thin-disk geometry, not a transparent square
+plane. Defaults are diameter `0.02`, thickness `0.001`, and 64 perimeter
+segments. Override them with `--diameter`, `--thickness`, and `--segments`.
+The disk lies in Blender's XZ plane, has its front normal along negative Y, and
+preserves the orientation of the existing standalone 2D assets. Existing
+dataset object-config orientation vectors do not need to change.
+
+Generate the five primitive sticker objects with one invocation per asset:
+
+```bash
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/square.png \
+  --out outputs/201_square/textured.glb
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/circle.png \
+  --out outputs/202_circle/textured.glb
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/triangle.png \
+  --out outputs/203_triangle/textured.glb
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/star.png \
+  --out outputs/204_star/textured.glb
+blender --background --python scripts/create_sticker_disk.py -- \
+  --image assets/2D_stickers/heart.png \
+  --out outputs/205_heart/textured.glb
+```
+
+The command refuses to overwrite an existing GLB. Choose a new output path or
+move the existing asset explicitly before regenerating it.
+
 ## Interactive Texture Stamp
 
 Run the picker in Blender's GUI so you can click a sensible surface point, such

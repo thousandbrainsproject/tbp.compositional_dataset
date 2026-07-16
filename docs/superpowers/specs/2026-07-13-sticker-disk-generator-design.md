@@ -22,15 +22,12 @@ disk will normally be about 20% of a parent object's width. This closely
 matches the configured maximum texture-stamp size of `0.021`.
 
 The default thickness will be `0.001` Blender units. The disk will lie in the
-XY plane, centered at the origin, with its front face normal pointing along
-+Z. Its object coordinate conventions are therefore:
-
-- front: `[0.0, 0.0, 1.0]`
-- up: `[0.0, 1.0, 0.0]`
-
-The existing `201_square` through `205_heart` object configs currently use
-the same vector for front and up. Those five external configs should be
-updated to the distinct vectors above when their GLBs are regenerated.
+XZ plane, centered at the origin, with its front face normal pointing along
+negative Y. This matches the Blender-space orientation of the existing
+`201_square` through `205_heart` assets. Blender's glTF coordinate conversion
+produces GLB bounds of `0.02 × 0.02 × 0.001`, while reimporting the GLB into
+Blender produces dimensions of `0.02 × 0.001 × 0.02`. Existing dataset object
+configs therefore do not require orientation changes.
 
 ## Command-Line Interface
 
@@ -110,6 +107,7 @@ Tests will be written before implementation and will cover:
 An integration check will run the script through the installed Blender binary
 against one repository sticker. The exported GLB will then be inspected to
 verify that it contains one mesh, circular bounds of approximately
-`0.02 × 0.02 × 0.001`, and the expected embedded material/texture data.
+`0.02 × 0.02 × 0.001` in glTF coordinates, and the expected two material
+primitives with embedded PNG texture data.
 
 The full repository test suite will run before the implementation is committed.

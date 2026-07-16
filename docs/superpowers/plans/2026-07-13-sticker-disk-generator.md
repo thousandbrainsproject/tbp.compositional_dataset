@@ -13,8 +13,8 @@
 - The default diameter is exactly `0.02` Blender units.
 - The default thickness is exactly `0.001` Blender units.
 - The default segment count is exactly `64`, with a minimum of `3`.
-- The disk is centered at the origin in the XY plane, with its front normal along +Z.
-- The cap artwork appears upright from direct views of both +Z and -Z faces.
+- The disk is centered at the origin in the XZ plane, with its front normal along -Y.
+- The cap artwork appears upright from direct views of both -Y and +Y faces.
 - The cap material uses the PNG; the side wall uses an opaque white material.
 - The output is genuine circular geometry, never a square plane using alpha for its silhouette.
 - Existing output files are not overwritten.
@@ -65,8 +65,8 @@ def test_default_disk_dimensions_and_counts() -> None:
     assert DEFAULT_THICKNESS == 0.001
     assert DEFAULT_SEGMENTS == 64
     assert max(xs) - min(xs) == pytest.approx(0.02)
-    assert max(ys) - min(ys) == pytest.approx(0.02)
-    assert max(zs) - min(zs) == pytest.approx(0.001)
+    assert max(ys) - min(ys) == pytest.approx(0.001)
+    assert max(zs) - min(zs) == pytest.approx(0.02)
     assert len(mesh.vertices) == 2 * 64 + 2
     assert len(mesh.faces) == 3 * 64
 
@@ -171,9 +171,9 @@ def build_sticker_disk_mesh(
     radius = diameter / 2.0
     half_thickness = thickness / 2.0
     angles = tuple(2.0 * math.pi * index / segments for index in range(segments))
-    front_ring = tuple((radius * math.cos(a), radius * math.sin(a), half_thickness) for a in angles)
-    back_ring = tuple((x, y, -half_thickness) for x, y, _z in front_ring)
-    vertices = ((0.0, 0.0, half_thickness), *front_ring, (0.0, 0.0, -half_thickness), *back_ring)
+    front_ring = tuple((radius * math.cos(a), -half_thickness, radius * math.sin(a)) for a in angles)
+    back_ring = tuple((x, half_thickness, z) for x, _y, z in front_ring)
+    vertices = ((0.0, -half_thickness, 0.0), *front_ring, (0.0, half_thickness, 0.0), *back_ring)
 
     front_center = 0
     front_start = 1
@@ -208,16 +208,18 @@ def build_sticker_disk_mesh(
 - [ ] **Step 4: Add failing tests for winding, UVs, and material assignment**
 
 ```python
-def _triangle_normal_z(vertices, face) -> float:
+def _triangle_normal_y(vertices, face) -> float:
     a, b, c = (vertices[index] for index in face)
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    ab = tuple(b[index] - a[index] for index in range(3))
+    ac = tuple(c[index] - a[index] for index in range(3))
+    return ab[2] * ac[0] - ab[0] * ac[2]
 
 
 def test_caps_face_outward() -> None:
     """Front and back triangle winding points away from the disk center."""
     mesh = build_sticker_disk_mesh(segments=8)
-    assert all(_triangle_normal_z(mesh.vertices, face) > 0.0 for face in mesh.faces[:8])
-    assert all(_triangle_normal_z(mesh.vertices, face) < 0.0 for face in mesh.faces[8:16])
+    assert all(_triangle_normal_y(mesh.vertices, face) < 0.0 for face in mesh.faces[:8])
+    assert all(_triangle_normal_y(mesh.vertices, face) > 0.0 for face in mesh.faces[8:16])
 
 
 def test_face_uvs_match_loops_and_stay_in_unit_square() -> None:
@@ -609,7 +611,6 @@ import sys
 import trimesh
 
 scene = trimesh.load(Path(sys.argv[1]), force="scene")
-assert len(scene.geometry) == 1
 extents = scene.extents
 assert abs(float(extents[0]) - 0.02) < 1e-6
 assert abs(float(extents[1]) - 0.02) < 1e-6
@@ -659,8 +660,9 @@ blender --background --python scripts/create_sticker_disk.py -- \
 The generated object is actual thin-disk geometry, not a transparent square
 plane. Defaults are diameter `0.02`, thickness `0.001`, and 64 perimeter
 segments. Override them with `--diameter`, `--thickness`, and `--segments`.
-The disk lies in the XY plane with front normal +Z, so dataset object configs
-should use `"front": [0.0, 0.0, 1.0]` and `"up": [0.0, 1.0, 0.0]`.
+The disk lies in Blender's XZ plane with front normal -Y, preserving the
+orientation of the existing standalone 2D assets. Existing dataset object
+configs do not need to change.
 ````
 
 - [ ] **Step 2: Add five explicit reproducible generation commands**
@@ -708,4 +710,4 @@ git commit -m "docs: document circular sticker asset generation"
 
 - [ ] **Step 5: Report external dataset rollout separately**
 
-Do not silently overwrite `/Users/hlee/tbp/data/compositional_objects_1.2`. Report the five commands needed to regenerate `201_square` through `205_heart`, and report that their config vectors should be changed to front `[0.0, 0.0, 1.0]` and up `[0.0, 1.0, 0.0]`. Apply those external changes only with explicit filesystem authorization.
+Do not silently overwrite `/Users/hlee/tbp/data/compositional_objects_1.2`. Report the five commands needed to regenerate `201_square` through `205_heart`; their existing config vectors remain unchanged. Apply external asset changes only with explicit filesystem authorization.
