@@ -6,9 +6,24 @@ from copy import deepcopy
 from dataclasses import dataclass
 from itertools import combinations
 import math
+from pathlib import Path
 import random
 import re
 from typing import Any
+
+
+@dataclass(frozen=True)
+class ObjectPair:
+    """Paths for one source object and its offset-ID target object."""
+
+    source_id: str
+    target_id: str
+    source_generation_config: Path
+    source_object_config: Path
+    source_mesh_dir: Path
+    target_generation_config: Path
+    target_object_config: Path
+    target_mesh_dir: Path
 
 
 @dataclass(frozen=True)
@@ -51,6 +66,187 @@ def target_object_id(source_id: str, id_offset: int) -> str:
     if target_number > 999:
         raise ValueError("target object ID exceeds three digits")
     return f"{target_number:03d}_{match.group(2)}"
+
+
+def discover_object_pairs(
+    source_dataset: Path,
+    out_dir: Path,
+    *,
+    source_start: int,
+    count: int,
+    id_offset: int,
+) -> tuple[ObjectPair, ...]:
+    """Discover complete source objects and preflight their target paths.
+
+    Args:
+        source_dataset: Dataset containing source generation, object, and mesh files.
+        out_dir: Dataset directory where target artifacts will be written.
+        source_start: First three-digit numeric source prefix to discover.
+        count: Number of consecutive numeric source prefixes to discover.
+        id_offset: Positive numeric offset used to construct target object IDs.
+
+    Returns:
+        Immutable source-target records in numeric source order.
+
+    Raises:
+        FileNotFoundError: If a requested source or required source artifact is missing.
+        FileExistsError: If any target artifact already exists.
+        ValueError: If a numeric prefix matches multiple generation configs.
+    """
+    pairs = []
+    for source_number in range(source_start, source_start + count):
+        matches = sorted(
+            (source_dataset / "generation_configs").glob(f"{source_number:03d}_*.json")
+        )
+        if not matches:
+            raise FileNotFoundError(f"source object {source_number:03d} was not found")
+        if len(matches) != 1:
+            raise ValueError(f"source object {source_number:03d} is ambiguous")
+
+        source_generation_config = matches[0]
+        source_id = source_generation_config.stem
+        source_object_config = (
+            source_dataset / "configs" / f"{source_id}.object_config.json"
+        )
+        source_mesh_dir = source_dataset / "meshes" / source_id
+        required_paths = (
+            source_object_config,
+            source_mesh_dir / "textured.glb",
+            source_mesh_dir / "textured.json",
+        )
+        for required_path in required_paths:
+            if not required_path.exists():
+                raise FileNotFoundError(
+                    f"source object {source_id} is missing {required_path.name}"
+                )
+
+        target_id = target_object_id(source_id, id_offset)
+        pairs.append(
+            ObjectPair(
+                source_id=source_id,
+                target_id=target_id,
+                source_generation_config=source_generation_config,
+                source_object_config=source_object_config,
+                source_mesh_dir=source_mesh_dir,
+                target_generation_config=out_dir
+                / "generation_configs"
+                / f"{target_id}.json",
+                target_object_config=out_dir
+                / "configs"
+                / f"{target_id}.object_config.json",
+                target_mesh_dir=out_dir / "meshes" / target_id,
+            )
+        )
+
+    for pair in pairs:
+        target_paths = (
+            pair.target_generation_config,
+            pair.target_object_config,
+            pair.target_mesh_dir,
+        )
+        if any(path.exists() for path in target_paths):
+            raise FileExistsError(f"target object {pair.target_id} already exists")
+    return tuple(pairs)
+
+
+def target_object_config(source: dict[str, Any], target_id: str) -> dict[str, Any]:
+    """Copy a Habitat object config and point it at a target mesh.
+
+    Args:
+        source: Source Habitat object configuration.
+        target_id: Target object identifier used in the mesh path.
+
+    Returns:
+        Deep-copied object configuration with its render asset updated.
+    """
+    target = deepcopy(source)
+    target["render_asset"] = f"../meshes/{target_id}/textured.glb"
+    return target
+
+
+def verify_rendered_pair(
+    source_config: dict[str, Any],
+    target_config: dict[str, Any],
+    source_metadata: dict[str, Any],
+    target_metadata: dict[str, Any],
+    bounds: PerturbationBounds,
+) -> None:
+    """Verify a rendered target preserves its source except for slot offsets.
+
+    Args:
+        source_config: Original six-slot generation configuration.
+        target_config: Perturbed six-slot generation configuration.
+        source_metadata: Metadata emitted when rendering the source object.
+        target_metadata: Metadata emitted when rendering the target object.
+        bounds: Allowed configured displacement bounds.
+
+    Raises:
+        ValueError: If the configs or rendered metadata do not form a valid pair.
+    """
+    validate_perturbed_config(source_config, target_config, bounds)
+    if source_metadata["parent_mesh_path"] != target_metadata["parent_mesh_path"]:
+        raise ValueError("rendered parent mesh changed")
+
+    source_records = {
+        record["slot_name"]: record for record in source_metadata["stickers"]
+    }
+    target_records = {
+        record["slot_name"]: record for record in target_metadata["stickers"]
+    }
+    slot_names = {slot["name"] for slot in source_config["slots"]}
+    if set(source_records) != slot_names or set(target_records) != slot_names:
+        raise ValueError("rendered sticker slots do not match configuration")
+
+    source_slots = {slot["name"]: slot for slot in source_config["slots"]}
+    target_slots = {slot["name"]: slot for slot in target_config["slots"]}
+    axes = {"x": 0, "y": 1, "z": 2}
+    right_axis = axes[target_config["placement"]["right_axis"]]
+    up_axis = axes[target_config["placement"]["up_axis"]]
+    for slot_name in slot_names:
+        source_record = source_records[slot_name]
+        target_record = target_records[slot_name]
+        if source_record["side"] != target_record["side"]:
+            raise ValueError("rendered sticker side changed")
+        if source_record["sticker_path"] != target_record["sticker_path"]:
+            raise ValueError("rendered sticker path changed")
+        if source_record["rotation_deg"] != target_record["rotation_deg"]:
+            raise ValueError("rendered sticker rotation changed")
+        try:
+            sizes_match = all(
+                math.isclose(source_size, target_size, abs_tol=1e-9)
+                for source_size, target_size in zip(
+                    source_record["size"], target_record["size"], strict=True
+                )
+            )
+        except ValueError:
+            sizes_match = False
+        if not sizes_match:
+            raise ValueError("rendered sticker size changed")
+        if (
+            target_record["texture_stamp_coverage_ratio"]
+            < target_config["min_coverage"]
+        ):
+            raise ValueError("rendered sticker coverage is below minimum")
+
+        source_anchor = source_record["world_space_anchor_point"]
+        target_anchor = target_record["world_space_anchor_point"]
+        source_offset = source_slots[slot_name]["offset"]
+        target_offset = target_slots[slot_name]["offset"]
+        rendered_displacement = (
+            target_anchor[right_axis] - source_anchor[right_axis],
+            target_anchor[up_axis] - source_anchor[up_axis],
+        )
+        configured_displacement = (
+            target_offset[0] - source_offset[0],
+            target_offset[1] - source_offset[1],
+        )
+        if not all(
+            math.isclose(rendered, configured, abs_tol=1e-9)
+            for rendered, configured in zip(
+                rendered_displacement, configured_displacement, strict=True
+            )
+        ):
+            raise ValueError("rendered anchor displacement changed")
 
 
 def validate_perturbed_config(

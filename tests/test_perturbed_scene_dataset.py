@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import math
+from pathlib import Path
 import random
 from typing import Any
 
 import pytest
 
 from tbp.compositional_datasets.perturbed_scene_dataset import (
+    ObjectPair,
     PerturbationBounds,
+    discover_object_pairs,
     perturb_stamp_config,
+    target_object_config,
     target_object_id,
     validate_perturbed_config,
+    verify_rendered_pair,
 )
 
 
@@ -36,10 +42,171 @@ def source_config() -> dict[str, Any]:
     }
 
 
+@pytest.fixture
+def miniature_dataset(tmp_path: Path) -> Path:
+    """Build a two-object scene dataset with all required source artifacts."""
+    dataset = tmp_path / "dataset"
+    for source_id in ("101_cube_6x2d_stickers", "102_cylinder_6x2d_stickers"):
+        generation_config = dataset / "generation_configs" / f"{source_id}.json"
+        object_config = dataset / "configs" / f"{source_id}.object_config.json"
+        mesh_dir = dataset / "meshes" / source_id
+        generation_config.parent.mkdir(parents=True, exist_ok=True)
+        object_config.parent.mkdir(parents=True, exist_ok=True)
+        mesh_dir.mkdir(parents=True, exist_ok=True)
+        generation_config.write_text("{}")
+        object_config.write_text(
+            json.dumps({"render_asset": f"../meshes/{source_id}/textured.glb"})
+        )
+        (mesh_dir / "textured.glb").write_bytes(b"glTF")
+        (mesh_dir / "textured.json").write_text("{}")
+    return dataset
+
+
 def test_target_id_adds_100_and_preserves_suffix():
     """Verify numeric ID offsets leave object-name suffixes unchanged."""
     assert target_object_id("101_cube_6x2d_stickers", 100) == "201_cube_6x2d_stickers"
     assert target_object_id("200_sphere_6x2d_stickers", 100) == "300_sphere_6x2d_stickers"
+
+
+def test_discovery_returns_complete_source_target_pairs(miniature_dataset: Path) -> None:
+    """Verify discovery maps consecutive complete sources to offset targets."""
+    pairs = discover_object_pairs(
+        miniature_dataset,
+        miniature_dataset,
+        source_start=101,
+        count=2,
+        id_offset=100,
+    )
+
+    assert [pair.target_id for pair in pairs] == [
+        "201_cube_6x2d_stickers",
+        "202_cylinder_6x2d_stickers",
+    ]
+    assert pairs[0] == ObjectPair(
+        source_id="101_cube_6x2d_stickers",
+        target_id="201_cube_6x2d_stickers",
+        source_generation_config=miniature_dataset
+        / "generation_configs"
+        / "101_cube_6x2d_stickers.json",
+        source_object_config=miniature_dataset
+        / "configs"
+        / "101_cube_6x2d_stickers.object_config.json",
+        source_mesh_dir=miniature_dataset / "meshes" / "101_cube_6x2d_stickers",
+        target_generation_config=miniature_dataset
+        / "generation_configs"
+        / "201_cube_6x2d_stickers.json",
+        target_object_config=miniature_dataset
+        / "configs"
+        / "201_cube_6x2d_stickers.object_config.json",
+        target_mesh_dir=miniature_dataset / "meshes" / "201_cube_6x2d_stickers",
+    )
+
+
+def test_discovery_rejects_missing_requested_source(miniature_dataset: Path) -> None:
+    """Verify discovery identifies the missing numeric source prefix."""
+    with pytest.raises(FileNotFoundError, match="source object 103"):
+        discover_object_pairs(
+            miniature_dataset,
+            miniature_dataset,
+            source_start=101,
+            count=3,
+            id_offset=100,
+        )
+
+
+def test_discovery_rejects_existing_target_before_returning_pairs(
+    miniature_dataset: Path,
+) -> None:
+    """Verify preflight rejects an existing target artifact."""
+    target_path = (
+        miniature_dataset / "generation_configs" / "201_cube_6x2d_stickers.json"
+    )
+    target_path.write_text("{}")
+
+    with pytest.raises(FileExistsError, match="201_cube_6x2d_stickers"):
+        discover_object_pairs(
+            miniature_dataset,
+            miniature_dataset,
+            source_start=101,
+            count=1,
+            id_offset=100,
+        )
+
+
+def test_target_object_config_changes_only_render_asset() -> None:
+    """Verify target Habitat config creation does not mutate its source."""
+    source = {
+        "render_asset": "../meshes/101_cube_6x2d_stickers/textured.glb",
+        "nested": {"values": [1, 2]},
+    }
+
+    target = target_object_config(source, "201_cube_6x2d_stickers")
+
+    assert target == {
+        "render_asset": "../meshes/201_cube_6x2d_stickers/textured.glb",
+        "nested": {"values": [1, 2]},
+    }
+    assert source["render_asset"] == "../meshes/101_cube_6x2d_stickers/textured.glb"
+    assert target["nested"] is not source["nested"]
+
+
+def _rendered_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    """Build rendered metadata whose anchors match configured x/z offsets."""
+    return {
+        "parent_mesh_path": "assets/parents/cube.glb",
+        "stickers": [
+            {
+                "slot_name": slot["name"],
+                "side": slot["side"],
+                "sticker_path": f"assets/stickers/{slot['name']}.png",
+                "rotation_deg": 15.0,
+                "size": [0.01, 0.02],
+                "world_space_anchor_point": [
+                    slot["offset"][0],
+                    0.0,
+                    slot["offset"][1],
+                ],
+                "texture_stamp_coverage_ratio": 1.0,
+            }
+            for slot in config["slots"]
+        ],
+    }
+
+
+def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any]) -> None:
+    """Verify paired metadata preserves layout semantics and displacement."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+
+    verify_rendered_pair(
+        source_config,
+        target_config,
+        _rendered_metadata(source_config),
+        _rendered_metadata(target_config),
+        PerturbationBounds(),
+    )
+
+
+def test_verification_rejects_changed_rendered_sticker_size(
+    source_config: dict[str, Any],
+) -> None:
+    """Verify paired renders cannot change physical sticker size."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    target_metadata["stickers"][0]["size"][0] += 0.001
+
+    with pytest.raises(ValueError, match="rendered sticker size changed"):
+        verify_rendered_pair(
+            source_config,
+            target_config,
+            source_metadata,
+            target_metadata,
+            PerturbationBounds(),
+        )
 
 
 def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_config):
