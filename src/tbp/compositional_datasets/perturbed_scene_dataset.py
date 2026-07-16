@@ -24,6 +24,7 @@ from tbp.compositional_datasets.scene_dataset import (
 
 MIN_STAMP_COVERAGE = 0.95
 ABSOLUTE_PROVENANCE_TOLERANCE = 1e-8
+GEOMETRY_TOLERANCE = 1e-12
 
 
 @dataclass(frozen=True)
@@ -283,6 +284,31 @@ def verify_rendered_pair(
             raise ValueError("rendered anchor displacement changed")
 
 
+def _projected_square_bounds(
+    slot: dict[str, Any], side_length: float
+) -> tuple[float, float, float, float]:
+    """Return conservative rotated-square bounds for one sticker slot.
+
+    Args:
+        slot: Sticker slot containing an offset and optional rotation in degrees.
+        side_length: Side length of the conservative square footprint.
+
+    Returns:
+        Minimum right, maximum right, minimum up, and maximum up bounds.
+    """
+    angle = math.radians(float(slot.get("rotation_deg", 0.0)))
+    half_extent = side_length / 2.0 * (
+        abs(math.cos(angle)) + abs(math.sin(angle))
+    )
+    right, up = slot["offset"]
+    return (
+        right - half_extent,
+        right + half_extent,
+        up - half_extent,
+        up + half_extent,
+    )
+
+
 def validate_perturbed_config(
     source: dict[str, Any],
     target: dict[str, Any],
@@ -306,13 +332,12 @@ def validate_perturbed_config(
     if source_non_offsets != target_non_offsets:
         raise ValueError("source and target differ outside slot offsets")
 
-    tolerance = 1e-12
     for source_slot, target_slot in zip(source["slots"], target["slots"], strict=True):
         displacement = math.dist(source_slot["offset"], target_slot["offset"])
         if not (
-            bounds.min_displacement - tolerance
+            bounds.min_displacement - GEOMETRY_TOLERANCE
             <= displacement
-            <= bounds.max_displacement + tolerance
+            <= bounds.max_displacement + GEOMETRY_TOLERANCE
         ):
             raise ValueError("slot displacement is outside perturbation bounds")
 
@@ -361,6 +386,25 @@ def validate_perturbed_config(
         for first, second in combinations(target_slots.values(), 2):
             if math.dist(first["offset"], second["offset"]) < minimum_spacing:
                 raise ValueError(f"slots overlap on side {side}")
+            first_bounds = _projected_square_bounds(
+                first, float(target["max_longest_side"])
+            )
+            second_bounds = _projected_square_bounds(
+                second, float(target["max_longest_side"])
+            )
+            right_overlap = min(first_bounds[1], second_bounds[1]) - max(
+                first_bounds[0], second_bounds[0]
+            )
+            up_overlap = min(first_bounds[3], second_bounds[3]) - max(
+                first_bounds[2], second_bounds[2]
+            )
+            if (
+                right_overlap > GEOMETRY_TOLERANCE
+                and up_overlap > GEOMETRY_TOLERANCE
+            ):
+                raise ValueError(
+                    f"sticker footprints overlap: {first['name']} and {second['name']}"
+                )
 
 
 def perturb_stamp_config(

@@ -640,6 +640,94 @@ def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_co
     validate_perturbed_config(source_config, first, bounds)
 
 
+def _candidate_at_attempt(
+    source: dict[str, Any], seed: int, attempt: int, bounds: PerturbationBounds
+) -> dict[str, Any]:
+    """Return the requested deterministic perturbation candidate.
+
+    Args:
+        source: Original sticker layout configuration.
+        seed: Random seed used for candidate sampling.
+        attempt: One-based candidate attempt to return.
+        bounds: Radial displacement sampling bounds.
+
+    Returns:
+        Deep-copied configuration containing the sampled offsets.
+    """
+    rng = random.Random(seed)
+    candidate = deepcopy(source)
+    for _ in range(attempt):
+        candidate = deepcopy(source)
+        for slot in candidate["slots"]:
+            angle = rng.uniform(0.0, 2.0 * math.pi)
+            radius = rng.uniform(bounds.min_displacement, bounds.max_displacement)
+            slot["offset"][0] += radius * math.cos(angle)
+            slot["offset"][1] += radius * math.sin(angle)
+    return candidate
+
+
+def test_seed_123_first_candidate_rejects_projected_footprint_overlap(
+    source_config: dict[str, Any],
+) -> None:
+    """Reject object 101's first candidate despite adequate center spacing."""
+    rotations = (75.0, 60.0, 150.0, 255.0, 150.0, 330.0)
+    for slot, rotation in zip(source_config["slots"], rotations, strict=True):
+        slot["rotation_deg"] = rotation
+    bounds = PerturbationBounds(0.002, 0.006)
+    candidate = _candidate_at_attempt(source_config, 123, 1, bounds)
+    back_top, _back_left, back_right = candidate["slots"][3:]
+
+    assert math.dist(back_top["offset"], back_right["offset"]) == pytest.approx(
+        0.0328261621633871
+    )
+    with pytest.raises(
+        ValueError,
+        match="sticker footprints overlap: back_top and back_right",
+    ):
+        validate_perturbed_config(source_config, candidate, bounds)
+
+
+def test_seed_123_resamples_to_second_projected_footprint_candidate(
+    source_config: dict[str, Any],
+) -> None:
+    """Return object 101's second conservative-valid candidate deterministically."""
+    rotations = (75.0, 60.0, 150.0, 255.0, 150.0, 330.0)
+    for slot, rotation in zip(source_config["slots"], rotations, strict=True):
+        slot["rotation_deg"] = rotation
+    bounds = PerturbationBounds(0.002, 0.006)
+    expected = _candidate_at_attempt(source_config, 123, 2, bounds)
+
+    first = perturb_stamp_config(source_config, random.Random(123), bounds)
+    second = perturb_stamp_config(source_config, random.Random(123), bounds)
+
+    assert first == second == expected
+    for source_slot, target_slot in zip(
+        source_config["slots"], first["slots"], strict=True
+    ):
+        assert bounds.min_displacement <= math.dist(
+            source_slot["offset"], target_slot["offset"]
+        ) <= bounds.max_displacement
+
+
+def test_projected_footprint_boundary_contact_is_not_overlap(
+    source_config: dict[str, Any],
+) -> None:
+    """Allow rotated conservative square bounds that only touch at an edge."""
+    half_extent = 0.021 / math.sqrt(2.0)
+    for slot in source_config["slots"]:
+        slot["rotation_deg"] = 45.0
+        position = slot["name"].rsplit("_", maxsplit=1)[-1]
+        if position == "left":
+            slot["offset"][0] = -half_extent
+        elif position == "right":
+            slot["offset"][0] = half_extent
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        slot["offset"][0] += 0.002
+
+    validate_perturbed_config(source_config, target, PerturbationBounds())
+
+
 def test_impossible_spacing_reports_attempt_limit(source_config):
     """Verify impossible spacing reports the exhausted attempt limit."""
     source_config["max_longest_side"] = 1.0
