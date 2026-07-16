@@ -229,3 +229,34 @@ This writes `compositional_objects.scene_dataset_config.json`,
 side by default for quick visual inspection; the rendered GLB remains the
 authoritative asset. Pass `--preview-texture-max-size` to choose a different
 preview size. Existing scene dataset output directories are always replaced.
+
+## Perturbed Object Pair Workflow
+
+First, generate a five-object pilot in a separate output directory:
+
+```bash
+source .venv/bin/activate
+python scripts/append_perturbed_scene_objects.py \
+  --source-dataset ~/tbp/data/compositional_objects_1.2 \
+  --out-dir ~/tbp/data/compositional_objects_1.2_perturbation_pilot \
+  --source-start 101 --count 5 --id-offset 100 --seed 123 \
+  --min-displacement 0.002 --max-displacement 0.006
+```
+
+Compare a source object and its perturbed pair side by side:
+
+```bash
+python scripts/visualize_model.py \
+  ~/tbp/data/compositional_objects_1.2/meshes/101_cube_6x2d_stickers/textured.glb \
+  ~/tbp/data/compositional_objects_1.2_perturbation_pilot/meshes/201_cube_6x2d_stickers/textured.glb
+```
+
+Run the production command only after the pilot has been reviewed and
+explicitly approved:
+
+```bash
+python scripts/append_perturbed_scene_objects.py \
+  --source-dataset ~/tbp/data/compositional_objects_1.2 \
+  --source-start 101 --count 100 --id-offset 100 --seed 123 \
+  --min-displacement 0.002 --max-displacement 0.006
+```
