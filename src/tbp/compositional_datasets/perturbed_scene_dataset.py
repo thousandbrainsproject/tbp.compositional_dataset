@@ -5,11 +5,22 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import combinations
+import json
 import math
 from pathlib import Path
 import random
 import re
+import shutil
+import tempfile
 from typing import Any
+
+from tbp.compositional_datasets.generation_configs import blender_stamp_command_args
+from tbp.compositional_datasets.scene_dataset import (
+    _normalize_texture_sidecar,
+    _run_render_command,
+    _write_json,
+    scene_dataset_config,
+)
 
 
 @dataclass(frozen=True)
@@ -379,3 +390,127 @@ def perturb_stamp_config(
     raise ValueError(
         f"could not sample a valid perturbed layout after {bounds.max_attempts} attempts: {last_error}"
     )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    """Read a JSON object from a file.
+
+    Args:
+        path: JSON file to read.
+
+    Returns:
+        Parsed JSON object.
+    """
+    return json.loads(path.read_text())
+
+
+def append_perturbed_scene_objects(
+    source_dataset: Path,
+    out_dir: Path,
+    *,
+    source_start: int,
+    count: int,
+    id_offset: int,
+    seed: int,
+    bounds: PerturbationBounds,
+    stamping_script: Path,
+    blender_executable: str = "blender",
+    preview_texture_max_size: int = 512,
+) -> tuple[ObjectPair, ...]:
+    """Render and atomically install a batch of perturbed object pairs.
+
+    Args:
+        source_dataset: Dataset containing the complete source objects.
+        out_dir: Dataset directory where verified target artifacts are installed.
+        source_start: First three-digit numeric source prefix to render.
+        count: Number of consecutive source objects to render.
+        id_offset: Offset used to construct protected target object IDs.
+        seed: Random seed used for deterministic offset perturbations.
+        bounds: Allowed displacement and perturbation sampling bounds.
+        stamping_script: Blender stamping script used to render each target.
+        blender_executable: Blender executable name or path.
+        preview_texture_max_size: Maximum width or height for `textured.png`.
+
+    Returns:
+        Immutable source-target records in numeric source order.
+
+    Raises:
+        FileExistsError: If any requested target already exists.
+        FileNotFoundError: If a source or rendered sidecar is missing.
+        RuntimeError: If Blender rendering fails.
+        ValueError: If discovery, perturbation, or rendered verification fails.
+    """
+    source_dataset = Path(source_dataset)
+    out_dir = Path(out_dir)
+    pairs = discover_object_pairs(
+        source_dataset,
+        out_dir,
+        source_start=source_start,
+        count=count,
+        id_offset=id_offset,
+    )
+    rng = random.Random(seed)
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{out_dir.name}-perturbed-staging-",
+        dir=out_dir.parent,
+    ) as staging_directory:
+        staging_dir = Path(staging_directory)
+        for pair in pairs:
+            staged_generation_config = (
+                staging_dir / "generation_configs" / f"{pair.target_id}.json"
+            )
+            staged_object_config = (
+                staging_dir / "configs" / f"{pair.target_id}.object_config.json"
+            )
+            staged_mesh_dir = staging_dir / "meshes" / pair.target_id
+            source_config = _read_json(pair.source_generation_config)
+            target_config = perturb_stamp_config(source_config, rng, bounds)
+            _write_json(staged_generation_config, target_config)
+            _write_json(
+                staged_object_config,
+                target_object_config(
+                    _read_json(pair.source_object_config), pair.target_id
+                ),
+            )
+            source_metadata = _read_json(pair.source_mesh_dir / "textured.json")
+            command = blender_stamp_command_args(
+                blender_executable,
+                stamping_script.resolve(),
+                Path(source_metadata["parent_mesh_path"]),
+                staged_generation_config,
+                staged_mesh_dir / "textured.glb",
+            )
+            _run_render_command(command)
+            _normalize_texture_sidecar(
+                staged_mesh_dir,
+                preview_texture_max_size=preview_texture_max_size,
+            )
+            verify_rendered_pair(
+                source_config,
+                target_config,
+                source_metadata,
+                _read_json(staged_mesh_dir / "textured.json"),
+                bounds,
+            )
+
+        for directory_name in ("generation_configs", "configs", "meshes"):
+            (out_dir / directory_name).mkdir(parents=True, exist_ok=True)
+        for pair in pairs:
+            shutil.move(
+                staging_dir / "generation_configs" / f"{pair.target_id}.json",
+                pair.target_generation_config,
+            )
+            shutil.move(
+                staging_dir / "configs" / f"{pair.target_id}.object_config.json",
+                pair.target_object_config,
+            )
+            shutil.move(
+                staging_dir / "meshes" / pair.target_id,
+                pair.target_mesh_dir,
+            )
+
+    scene_config_path = out_dir / "compositional_objects.scene_dataset_config.json"
+    if not scene_config_path.exists():
+        _write_json(scene_config_path, scene_dataset_config())
+    return pairs

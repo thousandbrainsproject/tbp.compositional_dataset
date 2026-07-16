@@ -8,7 +8,9 @@ import random
 from typing import Any
 
 import pytest
+from PIL import Image
 
+from tbp.compositional_datasets import perturbed_scene_dataset
 from tbp.compositional_datasets.perturbed_scene_dataset import (
     ObjectPair,
     PerturbationBounds,
@@ -43,7 +45,7 @@ def source_config() -> dict[str, Any]:
 
 
 @pytest.fixture
-def miniature_dataset(tmp_path: Path) -> Path:
+def miniature_dataset(tmp_path: Path, source_config: dict[str, Any]) -> Path:
     """Build a two-object scene dataset with all required source artifacts."""
     dataset = tmp_path / "dataset"
     for source_id in ("101_cube_6x2d_stickers", "102_cylinder_6x2d_stickers"):
@@ -53,12 +55,14 @@ def miniature_dataset(tmp_path: Path) -> Path:
         generation_config.parent.mkdir(parents=True, exist_ok=True)
         object_config.parent.mkdir(parents=True, exist_ok=True)
         mesh_dir.mkdir(parents=True, exist_ok=True)
-        generation_config.write_text("{}")
+        generation_config.write_text(json.dumps(source_config))
         object_config.write_text(
             json.dumps({"render_asset": f"../meshes/{source_id}/textured.glb"})
         )
         (mesh_dir / "textured.glb").write_bytes(b"glTF")
-        (mesh_dir / "textured.json").write_text("{}")
+        (mesh_dir / "textured.json").write_text(
+            json.dumps(_rendered_metadata(source_config))
+        )
     return dataset
 
 
@@ -196,6 +200,117 @@ def _rendered_metadata(config: dict[str, Any]) -> dict[str, Any]:
             for slot in config["slots"]
         ],
     }
+
+
+def _fake_render(command: list[str]) -> None:
+    """Write fake render outputs matching the command's stamp config.
+
+    Args:
+        command: Blender-style command arguments containing config and output paths.
+    """
+    config_path = Path(command[command.index("--config") + 1])
+    output_path = Path(command[command.index("--out") + 1])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(b"glTF")
+    Image.new("RGBA", (1024, 256), (255, 255, 255, 255)).save(
+        output_path.with_name("textured_stamped_texture.png")
+    )
+    output_path.with_suffix(".json").write_text(
+        json.dumps(_rendered_metadata(json.loads(config_path.read_text())))
+    )
+
+
+def test_append_renders_verifies_and_installs_complete_batch(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify a staged batch installs every artifact after all renders pass."""
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        _fake_render,
+    )
+    out_dir = tmp_path / "perturbed"
+
+    pairs = perturbed_scene_dataset.append_perturbed_scene_objects(
+        miniature_dataset,
+        out_dir,
+        source_start=101,
+        count=2,
+        id_offset=100,
+        seed=17,
+        bounds=PerturbationBounds(),
+        stamping_script=Path("scripts/stamp_object_from_config.py"),
+    )
+
+    assert [pair.target_id for pair in pairs] == [
+        "201_cube_6x2d_stickers",
+        "202_cylinder_6x2d_stickers",
+    ]
+    for pair in pairs:
+        assert pair.target_generation_config.exists()
+        assert pair.target_object_config.exists()
+        assert (pair.target_mesh_dir / "textured.glb").exists()
+        assert (pair.target_mesh_dir / "textured.json").exists()
+        preview_path = pair.target_mesh_dir / "textured.png"
+        assert preview_path.exists()
+        with Image.open(preview_path) as image:
+            assert image.size == (512, 128)
+    assert (out_dir / "compositional_objects.scene_dataset_config.json").exists()
+
+
+def test_append_render_failure_installs_no_targets_or_rewrites_scene_config(
+    miniature_dataset: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify a staged render failure leaves the destination unchanged."""
+    calls = 0
+
+    def fail_on_second_render(command: list[str]) -> None:
+        """Render the first target and fail before writing the second.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("render failed")
+        _fake_render(command)
+
+    monkeypatch.setattr(
+        "tbp.compositional_datasets.perturbed_scene_dataset._run_render_command",
+        fail_on_second_render,
+    )
+    scene_config_path = (
+        miniature_dataset / "compositional_objects.scene_dataset_config.json"
+    )
+    scene_config_path.write_text('{"existing": true}\n')
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            miniature_dataset,
+            source_start=101,
+            count=2,
+            id_offset=100,
+            seed=17,
+            bounds=PerturbationBounds(),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    for target_id in (
+        "201_cube_6x2d_stickers",
+        "202_cylinder_6x2d_stickers",
+    ):
+        assert not (
+            miniature_dataset / "generation_configs" / f"{target_id}.json"
+        ).exists()
+        assert not (
+            miniature_dataset / "configs" / f"{target_id}.object_config.json"
+        ).exists()
+        assert not (miniature_dataset / "meshes" / target_id).exists()
+    assert scene_config_path.read_text() == '{"existing": true}\n'
 
 
 def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any]) -> None:
