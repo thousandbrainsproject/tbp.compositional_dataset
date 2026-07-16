@@ -229,9 +229,11 @@ def _fake_render(command: list[str]) -> None:
     Image.new("RGBA", (1024, 256), (255, 255, 255, 255)).save(
         output_path.with_name("textured_stamped_texture.png")
     )
-    output_path.with_suffix(".json").write_text(
-        json.dumps(_rendered_metadata(json.loads(config_path.read_text())))
-    )
+    metadata = _rendered_metadata(json.loads(config_path.read_text()))
+    rendered_texture_path = output_path.with_name("textured_stamped_texture.png")
+    for record in metadata["stickers"]:
+        record["texture_stamp_path"] = str(rendered_texture_path)
+    output_path.with_suffix(".json").write_text(json.dumps(metadata))
 
 
 def _sample_valid_translated_candidate(
@@ -284,6 +286,10 @@ def test_append_renders_verifies_and_installs_complete_batch(
         _fake_render,
     )
     out_dir = tmp_path / "perturbed"
+    source_sidecars = {
+        path: path.read_text()
+        for path in (miniature_dataset / "meshes").glob("*/textured.json")
+    }
 
     pairs = perturbed_scene_dataset.append_perturbed_scene_objects(
         miniature_dataset,
@@ -307,9 +313,16 @@ def test_append_renders_verifies_and_installs_complete_batch(
         assert (pair.target_mesh_dir / "textured.json").exists()
         preview_path = pair.target_mesh_dir / "textured.png"
         assert preview_path.exists()
+        target_metadata = json.loads(
+            (pair.target_mesh_dir / "textured.json").read_text()
+        )
+        assert {
+            record["texture_stamp_path"] for record in target_metadata["stickers"]
+        } == {str(preview_path)}
         with Image.open(preview_path) as image:
             assert image.size == (512, 128)
     assert (out_dir / "compositional_objects.scene_dataset_config.json").exists()
+    assert {path: path.read_text() for path in source_sidecars} == source_sidecars
 
 
 def test_append_library_defaults_use_approved_seed_and_bounds(

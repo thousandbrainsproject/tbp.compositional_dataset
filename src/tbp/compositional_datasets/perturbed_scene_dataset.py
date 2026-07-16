@@ -17,6 +17,7 @@ from typing import Any
 from tbp.compositional_datasets.generation_configs import blender_stamp_command_args
 from tbp.compositional_datasets.scene_dataset import (
     _normalize_texture_sidecar,
+    _replace_string_values,
     _run_render_command,
     _write_json,
     scene_dataset_config,
@@ -606,6 +607,16 @@ def append_perturbed_scene_objects(
                     bounds,
                 )
                 break
+
+        for pair in pairs:
+            staged_mesh_dir = staging_dir / "meshes" / pair.target_id
+            staged_metadata_path = staged_mesh_dir / "textured.json"
+            metadata = _replace_string_values(
+                _read_json(staged_metadata_path),
+                str(staged_mesh_dir / "textured.png"),
+                str(pair.target_mesh_dir / "textured.png"),
+            )
+            _write_json(staged_metadata_path, metadata)
 
         for directory_name in ("generation_configs", "configs", "meshes"):
             (out_dir / directory_name).mkdir(parents=True, exist_ok=True)

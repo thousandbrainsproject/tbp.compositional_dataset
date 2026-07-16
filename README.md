@@ -233,15 +233,13 @@ preview size. Existing scene dataset output directories are always replaced.
 ## Perturbed Object Pair Workflow
 
 The five-shape calibration approved radial displacement bounds of `0.008` to
-`0.016` with seed `123`. These are the append command's defaults. To reproduce
-the approved pilot explicitly in a separate output directory:
+`0.016` with seed `123`. These are the append command's defaults.
 
+To generate the perturbed stickers:
 ```bash
-source .venv/bin/activate
 python scripts/append_perturbed_scene_objects.py \
   --source-dataset ~/tbp/data/compositional_objects_1.2 \
-  --out-dir ~/tbp/data/compositional_objects_1.2_perturbation_pilot \
-  --source-start 101 --count 5 --id-offset 100 --seed 123 \
+  --source-start 101 --count 100 --id-offset 100 --seed 123 \
   --min-displacement 0.008 --max-displacement 0.016
 ```
 
@@ -249,19 +247,10 @@ The append command refuses to overwrite any requested target. It stages and
 verifies the full batch before installation; if rendering or verification
 fails, it installs no target artifacts.
 
-Compare a source object and its perturbed pair side by side:
+To compare a source object and its perturbed pair side by side:
 
 ```bash
 python scripts/visualize_model.py \
   ~/tbp/data/compositional_objects_1.2/meshes/101_cube_6x2d_stickers/textured.glb \
   ~/tbp/data/compositional_objects_1.2_perturbation_pilot/meshes/201_cube_6x2d_stickers/textured.glb
-```
-
-Run the production command with the same approved calibration:
-
-```bash
-python scripts/append_perturbed_scene_objects.py \
-  --source-dataset ~/tbp/data/compositional_objects_1.2 \
-  --source-start 101 --count 100 --id-offset 100 --seed 123 \
-  --min-displacement 0.008 --max-displacement 0.016
 ```
