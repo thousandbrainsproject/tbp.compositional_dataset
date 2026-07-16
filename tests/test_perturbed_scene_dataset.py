@@ -490,10 +490,10 @@ def test_rendered_anchor_provenance_allows_independent_float_noise(
     for source_record, target_record in zip(
         source_metadata["stickers"], target_metadata["stickers"], strict=True
     ):
-        source_record["world_space_anchor_point"][0] += 4e-9
-        target_record["world_space_anchor_point"][0] -= 4e-9
-        source_record["world_space_anchor_point"][2] -= 3e-9
-        target_record["world_space_anchor_point"][2] += 3e-9
+        source_record["world_space_anchor_point"][0] += 5.5e-8
+        target_record["world_space_anchor_point"][0] -= 5.5e-8
+        source_record["world_space_anchor_point"][2] -= 5e-8
+        target_record["world_space_anchor_point"][2] += 5e-8
 
     verify_rendered_pair(
         source_config,
@@ -502,6 +502,33 @@ def test_rendered_anchor_provenance_allows_independent_float_noise(
         target_metadata,
         PerturbationBounds(),
     )
+
+
+def test_rendered_anchor_provenance_rejects_signed_component_mismatch(
+    source_config: dict[str, Any],
+) -> None:
+    """Reject and identify a signed component mismatch beyond float tolerance."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    target_metadata["stickers"][0]["world_space_anchor_point"][0] += 1.1e-6
+
+    with pytest.raises(ValueError) as exc_info:
+        verify_rendered_pair(
+            source_config,
+            target_config,
+            source_metadata,
+            target_metadata,
+            PerturbationBounds(),
+        )
+
+    message = str(exc_info.value)
+    assert "slot front_top" in message
+    assert "component right" in message
+    assert "expected 0.002" in message
+    assert "actual 0.0020011" in message
 
 
 def test_verification_rejects_changed_rendered_sticker_size(

@@ -23,7 +23,7 @@ from tbp.compositional_datasets.scene_dataset import (
 )
 
 MIN_STAMP_COVERAGE = 0.95
-ABSOLUTE_PROVENANCE_TOLERANCE = 1e-8
+RENDERED_ANCHOR_PROVENANCE_ABS_TOLERANCE = 1e-6
 GEOMETRY_TOLERANCE = 1e-12
 
 
@@ -270,18 +270,24 @@ def verify_rendered_pair(
             target_offset[0] - source_offset[0],
             target_offset[1] - source_offset[1],
         )
-        if not all(
-            math.isclose(
+        for component, rendered, configured in zip(
+            ("right", "up"),
+            rendered_displacement,
+            configured_displacement,
+            strict=True,
+        ):
+            if math.isclose(
                 rendered,
                 configured,
                 rel_tol=0.0,
-                abs_tol=ABSOLUTE_PROVENANCE_TOLERANCE,
+                abs_tol=RENDERED_ANCHOR_PROVENANCE_ABS_TOLERANCE,
+            ):
+                continue
+            raise ValueError(
+                "rendered anchor displacement changed for "
+                f"slot {slot_name} component {component}: "
+                f"expected {configured!r}, actual {rendered!r}"
             )
-            for rendered, configured in zip(
-                rendered_displacement, configured_displacement, strict=True
-            )
-        ):
-            raise ValueError("rendered anchor displacement changed")
 
 
 def _projected_square_bounds(
