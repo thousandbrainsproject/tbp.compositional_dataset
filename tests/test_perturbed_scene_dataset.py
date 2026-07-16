@@ -133,6 +133,31 @@ def test_discovery_rejects_existing_target_before_returning_pairs(
         )
 
 
+@pytest.mark.parametrize(
+    ("source_start", "count", "id_offset"),
+    [
+        (100, 1, 100),
+        (200, 2, 100),
+        (101, 1, 99),
+    ],
+)
+def test_discovery_rejects_ids_outside_protected_pair_domain(
+    miniature_dataset: Path,
+    source_start: int,
+    count: int,
+    id_offset: int,
+) -> None:
+    """Verify discovery reserves sources 101-200 and targets 201-300."""
+    with pytest.raises(ValueError, match="protected object ID domain"):
+        discover_object_pairs(
+            miniature_dataset,
+            miniature_dataset,
+            source_start=source_start,
+            count=count,
+            id_offset=id_offset,
+        )
+
+
 def test_target_object_config_changes_only_render_asset() -> None:
     """Verify target Habitat config creation does not mutate its source."""
     source = {
@@ -200,6 +225,107 @@ def test_verification_rejects_changed_rendered_sticker_size(
     target_metadata["stickers"][0]["size"][0] += 0.001
 
     with pytest.raises(ValueError, match="rendered sticker size changed"):
+        verify_rendered_pair(
+            source_config,
+            target_config,
+            source_metadata,
+            target_metadata,
+            PerturbationBounds(),
+        )
+
+
+@pytest.mark.parametrize("metadata_name", ["source", "target"])
+@pytest.mark.parametrize("invalid_record", ["duplicate", "extra"])
+def test_verification_rejects_duplicate_or_extra_rendered_records(
+    source_config: dict[str, Any],
+    metadata_name: str,
+    invalid_record: str,
+) -> None:
+    """Verify both rendered metadata lists contain each configured slot once."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    metadata = source_metadata if metadata_name == "source" else target_metadata
+    added_record = deepcopy(metadata["stickers"][0])
+    if invalid_record == "extra":
+        added_record["slot_name"] = "unexpected_slot"
+    metadata["stickers"].append(added_record)
+
+    with pytest.raises(
+        ValueError, match="rendered sticker slots do not match configuration"
+    ):
+        verify_rendered_pair(
+            source_config,
+            target_config,
+            source_metadata,
+            target_metadata,
+            PerturbationBounds(),
+        )
+
+
+def test_verification_reports_first_configured_slot_failure(
+    source_config: dict[str, Any],
+) -> None:
+    """Verify multiple metadata failures report in configured slot order."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    target_metadata["stickers"][0]["side"] = "back"
+    for record in target_metadata["stickers"][1:]:
+        record["sticker_path"] = "assets/stickers/wrong.png"
+
+    with pytest.raises(ValueError, match="rendered sticker side changed"):
+        verify_rendered_pair(
+            source_config,
+            target_config,
+            source_metadata,
+            target_metadata,
+            PerturbationBounds(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "expected_error"),
+    [
+        ("parent", "rendered parent mesh changed"),
+        ("sticker", "rendered sticker path changed"),
+        ("side", "rendered sticker side changed"),
+        ("rotation", "rendered sticker rotation changed"),
+        ("coverage", "rendered sticker coverage is below minimum"),
+        ("anchor", "rendered anchor displacement changed"),
+    ],
+)
+def test_verification_rejects_rendered_integrity_mismatch(
+    source_config: dict[str, Any],
+    mismatch: str,
+    expected_error: str,
+) -> None:
+    """Verify every required rendered-pair invariant rejects a mismatch."""
+    target_config = deepcopy(source_config)
+    for slot in target_config["slots"]:
+        slot["offset"][0] += 0.002
+    source_metadata = _rendered_metadata(source_config)
+    target_metadata = _rendered_metadata(target_config)
+    target_record = target_metadata["stickers"][0]
+    if mismatch == "parent":
+        target_metadata["parent_mesh_path"] = "assets/parents/other.glb"
+    elif mismatch == "sticker":
+        target_record["sticker_path"] = "assets/stickers/other.png"
+    elif mismatch == "side":
+        target_record["side"] = "back"
+    elif mismatch == "rotation":
+        target_record["rotation_deg"] += 1.0
+    elif mismatch == "coverage":
+        target_record["texture_stamp_coverage_ratio"] = 0.89
+    else:
+        source_anchor = source_metadata["stickers"][0]["world_space_anchor_point"]
+        target_record["world_space_anchor_point"][0] = source_anchor[0] - 0.002
+
+    with pytest.raises(ValueError, match=expected_error):
         verify_rendered_pair(
             source_config,
             target_config,

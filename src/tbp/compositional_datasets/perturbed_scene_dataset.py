@@ -91,8 +91,15 @@ def discover_object_pairs(
     Raises:
         FileNotFoundError: If a requested source or required source artifact is missing.
         FileExistsError: If any target artifact already exists.
-        ValueError: If a numeric prefix matches multiple generation configs.
+        ValueError: If IDs leave the protected pair domain or a numeric prefix
+            matches multiple generation configs.
     """
+    source_end = source_start + count - 1
+    if count <= 0 or source_start < 101 or source_end > 200 or id_offset != 100:
+        raise ValueError(
+            "protected object ID domain requires sources 101-200 and id_offset 100"
+        )
+
     pairs = []
     for source_number in range(source_start, source_start + count):
         matches = sorted(
@@ -187,14 +194,22 @@ def verify_rendered_pair(
     if source_metadata["parent_mesh_path"] != target_metadata["parent_mesh_path"]:
         raise ValueError("rendered parent mesh changed")
 
-    source_records = {
-        record["slot_name"]: record for record in source_metadata["stickers"]
-    }
-    target_records = {
-        record["slot_name"]: record for record in target_metadata["stickers"]
-    }
-    slot_names = {slot["name"] for slot in source_config["slots"]}
-    if set(source_records) != slot_names or set(target_records) != slot_names:
+    source_stickers = source_metadata["stickers"]
+    target_stickers = target_metadata["stickers"]
+    configured_slots = source_config["slots"]
+    if len(source_stickers) != len(configured_slots) or len(target_stickers) != len(
+        configured_slots
+    ):
+        raise ValueError("rendered sticker slots do not match configuration")
+
+    source_records = {record["slot_name"]: record for record in source_stickers}
+    target_records = {record["slot_name"]: record for record in target_stickers}
+    slot_names = [slot["name"] for slot in configured_slots]
+    expected_slot_names = set(slot_names)
+    if (
+        set(source_records) != expected_slot_names
+        or set(target_records) != expected_slot_names
+    ):
         raise ValueError("rendered sticker slots do not match configuration")
 
     source_slots = {slot["name"]: slot for slot in source_config["slots"]}
