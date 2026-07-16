@@ -426,8 +426,8 @@ def test_append_resamples_same_object_after_configured_slot_ray_miss(
         if render_calls == 1:
             _write_partial_render_artifacts(command)
             raise RuntimeError(
-                "Blender command failed. ValueError: Configured slot front_left "
-                "did not hit a mesh face"
+                "Blender command failed.\nstderr:\n"
+                "Configured slot front_left did not hit a mesh face"
             )
         output_path = Path(command[command.index("--out") + 1])
         assert not output_path.parent.exists()
@@ -514,6 +514,66 @@ def test_append_does_not_retry_unrelated_blender_failure(
     assert not (out_dir / "meshes").exists()
 
 
+@pytest.mark.parametrize(
+    "error_text",
+    [
+        (
+            "Fatal renderer shutdown: Configured slot front_left did not hit a "
+            "mesh face"
+        ),
+        "Configured slot unknown_slot did not hit a mesh face",
+    ],
+    ids=("embedded-phrase", "unconfigured-slot"),
+)
+def test_append_does_not_retry_ray_miss_near_matches(
+    miniature_dataset: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_text: str,
+) -> None:
+    """Abort when the ray-miss text is not an exact configured-slot line."""
+    render_calls = 0
+
+    def fail_with_near_match(command: list[str]) -> None:
+        """Raise the parameterized near-match renderer error.
+
+        Args:
+            command: Blender-style command arguments.
+        """
+        nonlocal render_calls
+        render_calls += 1
+        raise RuntimeError(error_text)
+
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "perturb_stamp_config",
+        _sample_valid_translated_candidate,
+    )
+    monkeypatch.setattr(
+        perturbed_scene_dataset,
+        "_run_render_command",
+        fail_with_near_match,
+    )
+    out_dir = tmp_path / "ray-miss-near-match"
+
+    with pytest.raises(RuntimeError):
+        perturbed_scene_dataset.append_perturbed_scene_objects(
+            miniature_dataset,
+            out_dir,
+            source_start=101,
+            count=1,
+            id_offset=100,
+            seed=123,
+            bounds=PerturbationBounds(0.008, 0.016, max_attempts=2),
+            stamping_script=Path("scripts/stamp_object_from_config.py"),
+        )
+
+    assert render_calls == 1
+    assert not (out_dir / "generation_configs").exists()
+    assert not (out_dir / "configs").exists()
+    assert not (out_dir / "meshes").exists()
+
+
 def test_append_exhausts_configured_slot_ray_miss_attempts_atomically(
     miniature_dataset: Path,
     tmp_path: Path,
@@ -532,8 +592,8 @@ def test_append_exhausts_configured_slot_ray_miss_attempts_atomically(
         render_calls += 1
         _write_partial_render_artifacts(command)
         raise RuntimeError(
-            "Blender command failed. ValueError: Configured slot back_right "
-            "did not hit a mesh face"
+            "Blender command failed.\nstderr:\n"
+            "Configured slot back_right did not hit a mesh face"
         )
 
     monkeypatch.setattr(

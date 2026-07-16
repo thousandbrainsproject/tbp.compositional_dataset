@@ -27,7 +27,7 @@ DEFAULT_PERTURBATION_SEED = 123
 RENDERED_ANCHOR_PROVENANCE_ABS_TOLERANCE = 1e-6
 GEOMETRY_TOLERANCE = 1e-12
 CONFIGURED_SLOT_RAY_MISS_PATTERN = re.compile(
-    r"Configured slot [^\r\n]+ did not hit a mesh face"
+    r"Configured slot (?P<slot_name>.+) did not hit a mesh face"
 )
 
 
@@ -466,6 +466,26 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def _configured_slot_ray_miss(
+    error_text: str,
+    configured_slot_names: set[str],
+) -> str | None:
+    """Return an exact ray-miss line for a configured slot, if present.
+
+    Args:
+        error_text: Captured Blender failure text split into complete lines.
+        configured_slot_names: Slot names in the candidate sent to Blender.
+
+    Returns:
+        Canonical ray-miss line when its captured slot is configured, else None.
+    """
+    for line in error_text.splitlines():
+        match = CONFIGURED_SLOT_RAY_MISS_PATTERN.fullmatch(line)
+        if match is not None and match.group("slot_name") in configured_slot_names:
+            return line
+    return None
+
+
 def append_perturbed_scene_objects(
     source_dataset: Path,
     out_dir: Path,
@@ -553,7 +573,10 @@ def append_perturbed_scene_objects(
                 try:
                     _run_render_command(command)
                 except RuntimeError as error:
-                    ray_miss = CONFIGURED_SLOT_RAY_MISS_PATTERN.search(str(error))
+                    ray_miss = _configured_slot_ray_miss(
+                        str(error),
+                        {slot["name"] for slot in target_config["slots"]},
+                    )
                     if ray_miss is None:
                         raise
                     shutil.rmtree(staged_mesh_dir, ignore_errors=True)
@@ -561,7 +584,7 @@ def append_perturbed_scene_objects(
                         raise RuntimeError(
                             f"rendering {pair.target_id} failed after "
                             f"{physical_attempt} physical candidate attempts: "
-                            f"{ray_miss.group(0)}"
+                            f"{ray_miss}"
                         ) from error
                     continue
 
