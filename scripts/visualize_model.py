@@ -72,30 +72,70 @@ def build_vedo_actor(record: MeshRecord) -> Mesh:
     return actor
 
 
-def render_record(record: MeshRecord) -> None:
-    """Render a mesh record in Vedo."""
-    actor = build_vedo_actor(record)
-    label = Text2D(record.name, pos="top-left", s=0.7, c="black")
+def render_records(records: list[MeshRecord]) -> None:
+    """Render one mesh or a source/target pair in Vedo.
+
+    Args:
+        records: One or two mesh records to render.
+
+    Raises:
+        ValueError: If `records` does not contain one or two models.
+    """
+    if len(records) not in {1, 2}:
+        raise ValueError("visualizer accepts one model or one source/target pair")
+
     plotter = Plotter(
-        size=DEFAULT_WINDOW_SIZE,
-        title="GLB texture preview",
+        shape=(1, len(records)),
+        sharecam=True,
+        size=(1000 * len(records), 800),
+        title="GLB texture comparison" if len(records) == 2 else "GLB texture preview",
+        interactive=False,
     )
-    plotter.add(actor, label)
-    plotter.show(axes=1, viewup="z", interactive=True)
+    for index, record in enumerate(records):
+        plotter.show(
+            build_vedo_actor(record),
+            Text2D(record.name, pos="top-left", s=0.7, c="black"),
+            at=index,
+            axes=1,
+            viewup="z",
+            interactive=index == len(records) - 1,
+        )
     plotter.close()
+
+
+def render_record(record: MeshRecord) -> None:
+    """Render one mesh record in Vedo.
+
+    Args:
+        record: Mesh record to render.
+    """
+    render_records([record])
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="View a GLB mesh and embedded/base-color texture with Vedo."
     )
-    parser.add_argument("glb", type=Path, help="GLB or other mesh file to load.")
+    parser.add_argument(
+        "glb",
+        nargs="+",
+        type=Path,
+        help="One or two GLB or other mesh files to load.",
+    )
     args = parser.parse_args()
-    if not args.glb.exists():
-        raise SystemExit(f"Mesh file not found: {args.glb}")
-    record = load_scene_mesh_records(args.glb)
-    print(f"Loaded {record.name}: {len(record.vertices)} vertices, {len(record.faces)} faces, texture")
-    render_record(record)
+    if len(args.glb) not in {1, 2}:
+        parser.error("provide one GLB or one source/target pair")
+    for path in args.glb:
+        if not path.exists():
+            raise SystemExit(f"Mesh file not found: {path}")
+
+    records = [load_scene_mesh_records(path) for path in args.glb]
+    for record in records:
+        print(
+            f"Loaded {record.name}: {len(record.vertices)} vertices, "
+            f"{len(record.faces)} faces, texture"
+        )
+    render_records(records)
 
 
 if __name__ == "__main__":
