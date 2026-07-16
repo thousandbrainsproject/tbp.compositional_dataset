@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 import random
 from typing import Any
@@ -61,3 +62,33 @@ def test_impossible_spacing_reports_attempt_limit(source_config):
     bounds = PerturbationBounds(0.002, 0.006, max_attempts=3)
     with pytest.raises(ValueError, match="after 3 attempts"):
         perturb_stamp_config(source_config, random.Random(7), bounds)
+
+
+def test_spacing_enforces_absolute_floor(source_config):
+    """Verify same-side spacing cannot fall below the absolute floor."""
+    source_config["max_longest_side"] = 0.01
+    source_config["gap"] = 0.001
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        slot["offset"][0] += 0.002
+    target["slots"][1]["offset"][0] = -0.012
+    target["slots"][2]["offset"][0] = 0.012
+
+    with pytest.raises(ValueError, match="slots overlap on side front"):
+        validate_perturbed_config(source_config, target, PerturbationBounds())
+
+
+def test_validation_reports_front_before_back_when_both_are_invalid(source_config):
+    """Verify invalid sides are validated in stable front-before-back order."""
+    target = deepcopy(source_config)
+    for slot in target["slots"]:
+        position = slot["name"].rsplit("_", maxsplit=1)[-1]
+        if position == "top":
+            slot["offset"][0] += 0.002
+        elif position == "left":
+            slot["offset"][0] += 0.006
+        else:
+            slot["offset"][0] -= 0.006
+
+    with pytest.raises(ValueError, match="slots overlap on side front"):
+        validate_perturbed_config(source_config, target, PerturbationBounds())

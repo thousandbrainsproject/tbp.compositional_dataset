@@ -86,8 +86,12 @@ def validate_perturbed_config(
         ):
             raise ValueError("slot displacement is outside perturbation bounds")
 
-    minimum_spacing = target["max_longest_side"] + target["gap"]
-    sides = {slot["side"] for slot in source["slots"]}
+    minimum_spacing = max(0.025, target["max_longest_side"] + target["gap"])
+    sides = ("front", "back")
+    if any(slot["side"] not in sides for slot in source["slots"]) or any(
+        not any(slot["side"] == side for slot in source["slots"]) for side in sides
+    ):
+        raise ValueError("slots must use front and back sides")
     for side in sides:
         source_slots = {
             slot["name"].rsplit("_", maxsplit=1)[-1]: slot
