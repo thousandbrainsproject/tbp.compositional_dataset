@@ -13,9 +13,9 @@
 - Map source IDs `101`–`200` to target IDs `201`–`300` by adding 100.
 - Never modify files belonging to IDs `001`–`200`.
 - Preserve parent, sticker, slot, side, `rotation_deg`, non-offset config fields, and rendered sticker size.
-- Sample every sticker independently with radial displacement in `[0.002, 0.006]` for the initial pilot.
+- Preserve `[0.002, 0.006]` as the initial-pilot calibration history; use the human-approved production interval `[0.008, 0.016]` with seed `123`.
 - Preserve top/left/right ordering, winding, and same-side center spacing of at least `0.025`.
-- Require a seed and stable source order.
+- Default to seed `123` and preserve stable source order; allow an explicit override.
 - Refuse target conflicts before rendering and install no requested targets after render or verification failure.
 - Keep Blender authoritative for ray hits, coverage of at least `0.95`, and actual footprint overlap.
 - Require explicit human approval after the five-shape pilot and before production.
@@ -43,7 +43,7 @@ The repository ignores new `tests/` and `docs/superpowers/` files. Force-add onl
 - Create: `tests/test_perturbed_scene_dataset.py`
 
 **Interfaces:**
-- Produces `PerturbationBounds(min_displacement=0.002, max_displacement=0.006, max_attempts=10_000)`.
+- Produces `PerturbationBounds(min_displacement=0.008, max_displacement=0.016, max_attempts=10_000)`; explicit bounds remain available for calibration tests.
 - Produces `target_object_id(source_id: str, id_offset: int) -> str`.
 - Produces `validate_perturbed_config(source: dict[str, Any], target: dict[str, Any], bounds: PerturbationBounds) -> None`.
 - Produces `perturb_stamp_config(source: dict[str, Any], rng: random.Random, bounds: PerturbationBounds) -> dict[str, Any]`.
@@ -59,7 +59,7 @@ def test_target_id_adds_100_and_preserves_suffix():
 
 
 def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_config):
-    bounds = PerturbationBounds(0.002, 0.006)
+    bounds = PerturbationBounds(0.008, 0.016)
     first = perturb_stamp_config(source_config, random.Random(123), bounds)
     second = perturb_stamp_config(source_config, random.Random(123), bounds)
     assert first == second
@@ -67,13 +67,13 @@ def test_seeded_perturbation_is_deterministic_and_changes_only_offsets(source_co
         assert {k: v for k, v in source_slot.items() if k != "offset"} == {
             k: v for k, v in target_slot.items() if k != "offset"
         }
-        assert 0.002 <= math.dist(source_slot["offset"], target_slot["offset"]) <= 0.006
+        assert 0.008 <= math.dist(source_slot["offset"], target_slot["offset"]) <= 0.016
     validate_perturbed_config(source_config, first, bounds)
 
 
 def test_impossible_spacing_reports_attempt_limit(source_config):
     source_config["max_longest_side"] = 1.0
-    bounds = PerturbationBounds(0.002, 0.006, max_attempts=3)
+    bounds = PerturbationBounds(0.008, 0.016, max_attempts=3)
     with pytest.raises(ValueError, match="after 3 attempts"):
         perturb_stamp_config(source_config, random.Random(7), bounds)
 ```
@@ -91,8 +91,8 @@ Use these exact public definitions and validation formulas:
 ```python
 @dataclass(frozen=True)
 class PerturbationBounds:
-    min_displacement: float = 0.002
-    max_displacement: float = 0.006
+    min_displacement: float = 0.008
+    max_displacement: float = 0.016
     max_attempts: int = 10_000
 
     def __post_init__(self) -> None:
@@ -300,12 +300,12 @@ git commit -m "feat: stage and verify perturbed object pairs"
 - Create: `tests/test_append_perturbed_scene_objects.py`
 
 **Interfaces:**
-- Defaults: start `101`, count `100`, offset `100`, minimum `0.002`, maximum `0.006`, attempts `10_000`, preview size `512`.
-- Requires `--source-dataset` and `--seed`; omitted `--out-dir` means in-place.
+- Defaults: start `101`, count `100`, offset `100`, seed `123`, minimum `0.008`, maximum `0.016`, attempts `10_000`, preview size `512`.
+- Requires `--source-dataset`; omitted `--out-dir` means in-place.
 
 - [ ] **Step 1: Write failing parse/forward tests**
 
-Assert the defaults above. Monkeypatch `append_perturbed_scene_objects`, call `main` with separate pilot output and `--count 5`, and assert it receives `PerturbationBounds(0.002, 0.006, 10_000)` and returns exit code 0.
+Assert the defaults above. Monkeypatch `append_perturbed_scene_objects`, call `main` with separate pilot output and `--count 5`, and assert it receives seed `123` and `PerturbationBounds(0.008, 0.016, 10_000)` and returns exit code 0.
 
 - [ ] **Step 2: Implement the CLI**
 
@@ -317,9 +317,9 @@ parser.add_argument("--out-dir", type=Path, default=None)
 parser.add_argument("--source-start", type=int, default=101)
 parser.add_argument("--count", type=int, default=100)
 parser.add_argument("--id-offset", type=int, default=100)
-parser.add_argument("--seed", type=int, required=True)
-parser.add_argument("--min-displacement", type=float, default=0.002)
-parser.add_argument("--max-displacement", type=float, default=0.006)
+parser.add_argument("--seed", type=int, default=123)
+parser.add_argument("--min-displacement", type=float, default=0.008)
+parser.add_argument("--max-displacement", type=float, default=0.016)
 parser.add_argument("--max-attempts", type=int, default=10_000)
 parser.add_argument("--configured-stamping-script", type=Path, default=ROOT / "scripts" / "stamp_object_from_config.py")
 parser.add_argument("--blender", default="blender")
@@ -418,7 +418,7 @@ python scripts/append_perturbed_scene_objects.py \
   --source-dataset ~/tbp/data/compositional_objects_1.2 \
   --out-dir ~/tbp/data/compositional_objects_1.2_perturbation_pilot \
   --source-start 101 --count 5 --id-offset 100 --seed 123 \
-  --min-displacement 0.002 --max-displacement 0.006
+  --min-displacement 0.008 --max-displacement 0.016
 ```
 
 Add pair comparison:
@@ -435,7 +435,7 @@ Add production, explicitly noting it runs only after pilot approval:
 python scripts/append_perturbed_scene_objects.py \
   --source-dataset ~/tbp/data/compositional_objects_1.2 \
   --source-start 101 --count 100 --id-offset 100 --seed 123 \
-  --min-displacement 0.002 --max-displacement 0.006
+  --min-displacement 0.008 --max-displacement 0.016
 ```
 
 - [ ] **Step 2: Run focused and full suites**
@@ -499,7 +499,10 @@ Run the paired viewer for `101/201`, `102/202`, `103/203`, `104/204`, and `105/2
 
 - [ ] **Step 5: Stop for explicit approval**
 
-Ask whether `max_displacement=0.006` is approved. Do not begin Task 8 without approval. If stronger motion is requested, use a new pilot path and rerun with only `--max-displacement` changed.
+Historical gate outcome: the initial range was too subtle. A stronger pilot was
+reviewed and the human approved `min_displacement=0.008`,
+`max_displacement=0.016`, and seed `123` for production. Task 8 may use only
+that recorded calibration unless a new approval supersedes it.
 
 ### Task 8: Production Append and Final Verification
 
@@ -521,17 +524,15 @@ Expected: both exit 0 with no output. Stop on any match; do not overwrite.
 
 - [ ] **Step 2: Run the production command with the approved maximum**
 
-Run this after `0.006` is approved:
+Run this with the approved calibration:
 
 ```bash
 source .venv/bin/activate
 python scripts/append_perturbed_scene_objects.py \
   --source-dataset ~/tbp/data/compositional_objects_1.2 \
   --source-start 101 --count 100 --id-offset 100 --seed 123 \
-  --min-displacement 0.002 --max-displacement 0.006
+  --min-displacement 0.008 --max-displacement 0.016
 ```
-
-If the pilot approves another maximum, replace only `0.006` with the exact approved value.
 
 Expected: `Installed 100 perturbed pairs: 201_cube_6x2d_stickers through 300_sphere_6x2d_stickers`.
 

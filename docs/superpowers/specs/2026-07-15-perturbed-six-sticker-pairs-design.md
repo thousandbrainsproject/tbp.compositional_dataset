@@ -68,18 +68,19 @@ distance  ~ Uniform(min_displacement, max_displacement)
 delta     = distance * (cos(direction), sin(direction))
 ```
 
-The initial bounds are:
+The initial pilot bounds were:
 
 - `min_displacement = 0.002`
 - `max_displacement = 0.006`
 
-The minimum guarantees that every child moves perceptibly rather than relying
-on the aggregate layout to differ. The maximum is a pilot value, not a hard-coded
-experimental constant. It may be increased and the pilot rerun if the movement
-is still too subtle, provided all geometric and render validations pass.
+These values are retained as calibration history. Human review found that
+pilot too subtle and approved `min_displacement = 0.008` and
+`max_displacement = 0.016` with seed `123`. Those approved values are the
+production defaults.
 
-Sampling uses a required seed and a stable source-ID order. Repeating a run with
-the same inputs and seed must produce identical target configs.
+Sampling defaults to seed `123` and uses a stable source-ID order. The seed can
+be overridden; repeating a run with the same inputs and seed must produce
+identical target configs.
 
 ## Structural Constraints
 
@@ -164,7 +165,9 @@ Implementation will add three focused capabilities:
    triangle validation, config cloning, and paired metadata verification. It
    also coordinates staged rendering and installation.
 2. A CLI accepting source dataset, output dataset, source range, ID offset,
-   seed, displacement bounds, Blender executable, and preview texture size.
+   seed, displacement bounds, Blender executable, and preview texture size,
+   with approved defaults `123`, `0.008`, and `0.016` for seed, minimum, and
+   maximum displacement.
    Using a separate output directory creates the pilot; using the source dataset
    as the output performs the final append.
 3. A paired visualization mode that displays a source GLB and its target GLB
@@ -177,16 +180,16 @@ docstrings.
 
 ## Pilot and Calibration Workflow
 
-The first run selects sources `101` through `105`, which cover cube, cylinder,
-disk, mug, and sphere, and targets them to `201` through `205` in a separate
-pilot directory. The initial pilot uses `[0.002, 0.006]` displacement bounds.
+The first run selected sources `101` through `105`, which cover cube, cylinder,
+disk, mug, and sphere, and targeted them to `201` through `205` in a separate
+pilot directory. That initial pilot used `[0.002, 0.006]` displacement bounds.
 
 Each source/target pair is reviewed side by side. Approval requires that every
 object remains recognizable as the same six-sticker composition and that the
 location changes are readily perceptible when looking back and forth. If the
-changes are too subtle, only `max_displacement` is increased and the same seeded
-pilot is rerun. The accepted maximum is then used for the full `101` through
-`200` production run.
+changes are too subtle, the displacement interval is recalibrated and the same
+seeded pilot is rerun. Human review approved `[0.008, 0.016]` with seed `123`
+for the full `101` through `200` production run.
 
 ## Testing
 
@@ -222,7 +225,8 @@ The design is satisfied when:
   `compositional_objects_1.2` as direct pairs of `101` through `200`.
 - Every target preserves its source parent, sticker identities, sides,
   configured rotations, and rendered sticker sizes.
-- Every sticker moves by at least `0.002` and no more than the approved maximum.
+- Every sticker moves by at least `0.008` and no more than `0.016` under the
+  approved production calibration.
 - Both triads remain recognizable, valid, and non-overlapping.
 - The original dataset files remain unchanged.
 - All automated tests pass and the complete rendered batch passes paired

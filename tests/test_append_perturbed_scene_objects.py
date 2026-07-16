@@ -34,7 +34,7 @@ def test_parse_args_uses_perturbed_pair_defaults() -> None:
     """Parse the documented defaults for an in-place append."""
     script = load_script()
 
-    args = script.parse_args(["--source-dataset", "dataset", "--seed", "123"])
+    args = script.parse_args(["--source-dataset", "dataset"])
 
     assert args.source_dataset == Path("dataset")
     assert args.out_dir is None
@@ -42,8 +42,8 @@ def test_parse_args_uses_perturbed_pair_defaults() -> None:
     assert args.count == 100
     assert args.id_offset == 100
     assert args.seed == 123
-    assert args.min_displacement == 0.002
-    assert args.max_displacement == 0.006
+    assert args.min_displacement == 0.008
+    assert args.max_displacement == 0.016
     assert args.max_attempts == 10_000
     assert args.configured_stamping_script == (
         Path(__file__).resolve().parents[1]
@@ -93,8 +93,6 @@ def test_main_forwards_pilot_arguments(
             "pilot",
             "--count",
             "5",
-            "--seed",
-            "123",
         ]
     )
 
@@ -108,7 +106,7 @@ def test_main_forwards_pilot_arguments(
                 "count": 5,
                 "id_offset": 100,
                 "seed": 123,
-                "bounds": PerturbationBounds(0.002, 0.006, 10_000),
+                "bounds": PerturbationBounds(0.008, 0.016, 10_000),
                 "stamping_script": (
                     Path(__file__).resolve().parents[1]
                     / "scripts"

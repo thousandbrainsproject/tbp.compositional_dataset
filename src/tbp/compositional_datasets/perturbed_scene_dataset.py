@@ -45,8 +45,8 @@ class ObjectPair:
 class PerturbationBounds:
     """Bounds controlling independent sticker-position perturbations."""
 
-    min_displacement: float = 0.002
-    max_displacement: float = 0.006
+    min_displacement: float = 0.008
+    max_displacement: float = 0.016
     max_attempts: int = 10_000
 
     def __post_init__(self) -> None:

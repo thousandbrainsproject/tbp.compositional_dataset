@@ -73,6 +73,11 @@ def test_target_id_adds_100_and_preserves_suffix():
     assert target_object_id("101_cube_6x2d_stickers", 7) == "108_cube_6x2d_stickers"
 
 
+def test_perturbation_bounds_use_human_approved_calibration_defaults() -> None:
+    """Use the approved displacement interval for production sampling."""
+    assert PerturbationBounds() == PerturbationBounds(0.008, 0.016, 10_000)
+
+
 def test_discovery_returns_complete_source_target_pairs(miniature_dataset: Path) -> None:
     """Verify discovery maps consecutive complete sources to offset targets."""
     pairs = discover_object_pairs(
@@ -473,7 +478,7 @@ def test_matching_rendered_pair_passes_verification(source_config: dict[str, Any
         target_config,
         _rendered_metadata(source_config),
         _rendered_metadata(target_config),
-        PerturbationBounds(),
+        PerturbationBounds(0.002, 0.006),
     )
 
 
@@ -500,7 +505,7 @@ def test_rendered_anchor_provenance_allows_independent_float_noise(
         target_config,
         source_metadata,
         target_metadata,
-        PerturbationBounds(),
+        PerturbationBounds(0.002, 0.006),
     )
 
 
@@ -521,7 +526,7 @@ def test_rendered_anchor_provenance_rejects_signed_component_mismatch(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(),
+            PerturbationBounds(0.002, 0.006),
         )
 
     message = str(exc_info.value)
@@ -548,7 +553,7 @@ def test_verification_rejects_changed_rendered_sticker_size(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(),
+            PerturbationBounds(0.002, 0.006),
         )
 
 
@@ -579,7 +584,7 @@ def test_verification_rejects_duplicate_or_extra_rendered_records(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(),
+            PerturbationBounds(0.002, 0.006),
         )
 
 
@@ -602,7 +607,7 @@ def test_verification_reports_first_configured_slot_failure(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(),
+            PerturbationBounds(0.002, 0.006),
         )
 
 
@@ -649,7 +654,7 @@ def test_verification_rejects_rendered_integrity_mismatch(
             target_config,
             source_metadata,
             target_metadata,
-            PerturbationBounds(),
+            PerturbationBounds(0.002, 0.006),
         )
 
 
@@ -752,7 +757,9 @@ def test_projected_footprint_boundary_contact_is_not_overlap(
     for slot in target["slots"]:
         slot["offset"][0] += 0.002
 
-    validate_perturbed_config(source_config, target, PerturbationBounds())
+    validate_perturbed_config(
+        source_config, target, PerturbationBounds(0.002, 0.006)
+    )
 
 
 def test_impossible_spacing_reports_attempt_limit(source_config):
@@ -774,7 +781,9 @@ def test_spacing_enforces_absolute_floor(source_config):
     target["slots"][2]["offset"][0] = 0.012
 
     with pytest.raises(ValueError, match="slots overlap on side front"):
-        validate_perturbed_config(source_config, target, PerturbationBounds())
+        validate_perturbed_config(
+            source_config, target, PerturbationBounds(0.002, 0.006)
+        )
 
 
 def test_validation_rejects_top_below_a_lower_slot(source_config):
@@ -873,4 +882,6 @@ def test_validation_reports_front_before_back_when_both_are_invalid(source_confi
             slot["offset"][0] -= 0.006
 
     with pytest.raises(ValueError, match="slots overlap on side front"):
-        validate_perturbed_config(source_config, target, PerturbationBounds())
+        validate_perturbed_config(
+            source_config, target, PerturbationBounds(0.002, 0.006)
+        )

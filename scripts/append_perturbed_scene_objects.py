@@ -28,9 +28,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source-start", type=int, default=101)
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--id-offset", type=int, default=100)
-    parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--min-displacement", type=float, default=0.002)
-    parser.add_argument("--max-displacement", type=float, default=0.006)
+    parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--min-displacement", type=float, default=0.008)
+    parser.add_argument("--max-displacement", type=float, default=0.016)
     parser.add_argument("--max-attempts", type=int, default=10_000)
     parser.add_argument(
         "--configured-stamping-script",
