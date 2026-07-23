@@ -232,7 +232,10 @@ preview size. Existing scene dataset output directories are always replaced.
 
 ## Perturbed Object Pair Workflow
 
-The five-shape calibration approved radial displacement bounds of `0.008` to
+Generates 6 stickers on 3D objects with varying locations. It creates one 
+variant per object from Batch Six-Sticker Config Generation.
+
+Locations of 2D stickers are applied with a radial displacement bounds of `0.008` to
 `0.016` with seed `123`. These are the append command's defaults.
 
 To generate the perturbed stickers:
