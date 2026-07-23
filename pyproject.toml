@@ -1,0 +1,29 @@
+[project]
+name = "tbp-compositional-datasets"
+version = "0.1.0"
+description = "Generate compositional 2D-on-3D objects from surface-frame attachments."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "bpy>=4.3",
+    "numpy>=2.0",
+    "pillow>=10.0",
+    "trimesh>=4.0",
+    "vedo>=2026.6.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tbp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
